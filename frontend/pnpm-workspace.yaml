@@ -1,0 +1,7 @@
+packages:
+  - web
+  - desktop
+
+allowBuilds:
+  electron-winstaller: false
+  esbuild: true

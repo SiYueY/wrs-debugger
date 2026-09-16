@@ -1,0 +1,47 @@
+{
+  "name": "@wrs-debugger/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n build,electron \"pnpm dev:build\" \"pnpm dev:electron\"",
+    "dev:build": "tsup --watch",
+    "dev:electron": "wait-on http://127.0.0.1:5173 dist/main/index.cjs && electron .",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "package": "pnpm build && electron-builder",
+    "clean": "rm -rf dist release"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "concurrently": "^10.0.5",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "tsup": "^8.5.1",
+    "typescript": "~6.0.3",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.wrs.debugger",
+    "productName": "WRS Debugger",
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      }
+    ]
+  }
+}

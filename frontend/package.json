@@ -1,0 +1,24 @@
+{
+  "name": "wrs-debugger-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.27.0",
+  "engines": {
+    "node": ">=22 <23",
+    "pnpm": ">=11 <12"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @wrs-debugger/web dev",
+    "dev:desktop": "concurrently -k -n web,desktop \"pnpm --filter @wrs-debugger/web dev\" \"pnpm --filter @wrs-debugger/desktop dev\"",
+    "build:web": "pnpm --filter @wrs-debugger/web build",
+    "build:desktop": "pnpm --filter @wrs-debugger/web build && pnpm --filter @wrs-debugger/desktop build",
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "prettier": "^3.8.2"
+  }
+}

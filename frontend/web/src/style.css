@@ -1,0 +1,33 @@
+:root {
+  font-family: Inter, 'Noto Sans SC', 'Segoe UI', sans-serif;
+  color: #243044;
+  background: #f4f6f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --app-border: #dfe4ea;
+  --app-muted: #6c7787;
+  --app-panel: #ffffff;
+  --app-bg: #f4f6f8;
+  --app-primary: #2563a8;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  min-width: 1024px;
+  min-height: 100vh;
+  margin: 0;
+}
+body {
+  background: var(--app-bg);
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
