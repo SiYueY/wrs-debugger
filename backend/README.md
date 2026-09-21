@@ -1,13 +1,11 @@
-# WRS Debugger Backend
+# WRS Debugger Backend V1
 
-WRS Debugger 的本地业务后端。它为唯一 Vue UI 提供 REST 与 WebSocket 接口，用于连接配置、无线急停盒与机器人接收板参数、同步和出厂绑定流程。
-
-这是一个可替换的 mock 实现：Route 只表达产品业务，Service 管理当前内存状态。后续接入 NativeFacade/C++ 时，应替换 Service 底部实现，而非暴露 ROS、USB Serial、CDU、RS485、帧、CRC 或 Kbind。
+WRS Debugger 的本地业务后端。FastAPI Route 只表达产品业务，Service 通过 `WrsGateway` 访问设备；当前使用完整的 `MockWrsGateway`，未来仅替换为 pybind11/C++ adapter。REST 不暴露帧、CRC、DDS、Kbind 或其他协议控制字段。
 
 ## Boundary
 
 ```text
-frontend/web → /api/v1 → FastAPI route → service → mock state
+frontend/web → /api/v1 → FastAPI route → service → WrsGateway → MockWrsGateway
 ```
 
 当前不访问真实硬件、不使用 ROS 2/pyserial、不保存数据库状态，也不承担无线急停运行时安全控制。
@@ -30,21 +28,22 @@ uv run uvicorn wrs_debugger.main:app --reload --host 127.0.0.1 --port 8000
 | `GET /api/v1/health` | Backend liveness，不依赖任何设备。 |
 | `/docs` | OpenAPI/Swagger UI。 |
 | `/redoc` | ReDoc。 |
-| `WS /api/v1/events` | robot/box connection 与 operation 状态变更。 |
+| `WS /api/v1/events` | Transmitter/Receiver、参数及 Operation 状态变更。 |
 
 ## HTTP contract
 
-所有 REST endpoint 位于 `/api/v1`，使用 JSON 与 snake_case。配置模型由公共无线字段及 `phy` 判别联合构成：`phy.modulation` 为 `lora` 或 `gfsk`；频率使用 Hz、同步字为整数。具体 OpenAPI schema 是契约的权威来源。
+所有 REST endpoint 位于 `/api/v1`，使用 JSON 与 snake_case。LoRa 与 GFSK 是独立资源，不存在通用 `RadioConfig` 或 modulation discriminator；具体 OpenAPI schema 是契约的权威来源。
 
 主要资源：
 
-- `/connection/robot` 与 `/connection/box`：连接读取、连接/断开，及 Robot apply/reload、串口设备列表。
-- `/box`、`/box/config`、`/box/pin`：急停盒信息、配置、PIN、恢复默认。
-- `/receiver`、`/receiver/config`：接收板信息、配置、恢复默认。
-- `/receiver/sync-from-box`、`/receiver/factory-bind`：异步业务 Operation，返回 `202` 与 `operation_id`。
-- `/operations/{operation_id}`：查询 Operation。
+- `/transmitter`：串口、连接、信息、PIN 和独立 LoRa/GFSK 参数。
+- `/receiver`：Domain ID、连接、信息、独立 LoRa/GFSK 参数和跨设备操作。
+- `/operations`：查询异步同步和出厂绑定 Operation。
+- `/snapshot`：仅返回连接与活动 Operation 的轻量内存状态。
 
-业务错误使用 `{ "code": "…", "message": "…" }`；Pydantic 请求校验保持 FastAPI 的 `422` 响应。
+所有业务和请求校验错误均为 Problem Details：`type`、`title`、`status`、`detail`、`code`、`request_id`、`context`。Public JSON 字段使用协议原始值；`bitrate` 和 `freq_deviation` 为 uint32 范围。
+
+`MockWrsGateway` 同时镜像开发所需的连接、Receiver 设置和活动 Operation 状态。Mock 调用内联执行；未来 pybind gateway 通过唯一的 `ThreadedNativeExecutor` seam 调度同步 USB/DDS 调用，避免阻塞 FastAPI event loop。
 
 ## Development workflow
 
@@ -63,9 +62,10 @@ uv run python -m compileall wrs_debugger
 
 ```text
 wrs_debugger/
-├── main.py          # 应用装配、lifespan 与 HTTP/WS entrypoints
-├── models/          # Pydantic request/response contract
-├── services/        # 业务约束、mock state 与 operation lifecycle
-└── websocket/       # 最小连接管理器
-tests/               # 不依赖 ROS、USB 或真实设备的 API tests
+├── api/             # routers、依赖及统一错误转换
+├── gateway/         # WrsGateway protocol 与 MockWrsGateway
+├── models/          # 严格 Pydantic public contract
+├── operations/      # 单活动跨设备 Operation 管理
+├── services/        # Transmitter、Receiver、同步和绑定业务
+└── websocket/       # 有界队列 WebSocket hub
 ```

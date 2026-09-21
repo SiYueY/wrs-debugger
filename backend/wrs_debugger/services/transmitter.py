@@ -1,0 +1,168 @@
+from datetime import UTC, datetime
+
+from wrs_debugger.errors import ApplicationError
+from wrs_debugger.models.connection import (
+    ConnectionError,
+    ConnectionState,
+    ConnectTransmitterRequest,
+    TransmitterConnection,
+)
+from wrs_debugger.models.device import (
+    PinResponse,
+    SerialPortListResponse,
+    TransmitterInfo,
+    WritePinRequest,
+)
+from wrs_debugger.models.event import EventName
+from wrs_debugger.models.radio import GfskParameters, LoRaParameters
+from wrs_debugger.services.runtime import Runtime
+
+
+class TransmitterService:
+    def __init__(self, runtime: Runtime) -> None:
+        self.runtime = runtime
+
+    async def list_serial_ports(self) -> SerialPortListResponse:
+        ports = await self.runtime.call(self.runtime.gateway.list_serial_ports)
+        return SerialPortListResponse(ports=ports)
+
+    def connection(self) -> TransmitterConnection:
+        return self.runtime.transmitter_connection.model_copy(deep=True)
+
+    async def connect(self, request: ConnectTransmitterRequest) -> TransmitterConnection:
+        self.runtime.require_no_cross_device_operation()
+        async with self.runtime.transmitter_lock:
+            current = self.runtime.transmitter_connection
+            if current.state == ConnectionState.connected and current.device == request.device:
+                return current.model_copy(deep=True)
+            if current.state == ConnectionState.connected:
+                await self.runtime.call(self.runtime.gateway.disconnect_transmitter)
+            self.runtime.set_transmitter_connection(
+                TransmitterConnection(state=ConnectionState.connecting, device=request.device)
+            )
+            await self._publish_connection()
+            try:
+                await self.runtime.call(
+                    lambda: self.runtime.gateway.connect_transmitter(request.device)
+                )
+            except ApplicationError as error:
+                self.runtime.set_transmitter_connection(
+                    TransmitterConnection(
+                        state=ConnectionState.failed,
+                        device=request.device,
+                        error=ConnectionError(code=error.code, detail=error.detail),
+                    )
+                )
+                await self._publish_connection()
+                raise
+            self.runtime.set_transmitter_connection(
+                TransmitterConnection(
+                    state=ConnectionState.connected,
+                    device=request.device,
+                    connected_at=datetime.now(UTC),
+                )
+            )
+            await self._publish_connection()
+            return self.connection()
+
+    async def disconnect(self) -> TransmitterConnection:
+        self.runtime.require_no_cross_device_operation()
+        async with self.runtime.transmitter_lock:
+            await self.runtime.call(self.runtime.gateway.disconnect_transmitter)
+            self.runtime.set_transmitter_connection(
+                TransmitterConnection(state=ConnectionState.disconnected)
+            )
+            await self._publish_connection()
+            return self.connection()
+
+    async def info(self) -> TransmitterInfo:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            return await self.runtime.call(self.runtime.gateway.read_transmitter_info)
+
+    async def read_pin(self) -> PinResponse:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            return PinResponse(
+                pin=await self.runtime.call(self.runtime.gateway.read_transmitter_pin)
+            )
+
+    async def write_pin(self, request: WritePinRequest) -> None:
+        self._require_connected()
+        if request.pin == "000000":
+            raise ApplicationError(
+                "PARAMETER_VALIDATION_FAILED",
+                422,
+                "Parameter validation failed",
+                "PIN 000000 is reserved for the protocol read request.",
+            )
+        async with self.runtime.transmitter_lock:
+            await self.runtime.call(lambda: self.runtime.gateway.write_transmitter_pin(request.pin))
+
+    async def read_lora(self) -> LoRaParameters:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            return await self.runtime.call(self.runtime.gateway.read_transmitter_lora_parameters)
+
+    async def write_lora(self, parameters: LoRaParameters) -> None:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            await self.runtime.call(
+                lambda: self.runtime.gateway.write_transmitter_lora_parameters(parameters)
+            )
+        await self.runtime.publish(
+            EventName.transmitter_lora_parameters_changed, parameters.model_dump(mode="json")
+        )
+
+    async def restore_lora(self) -> None:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            await self.runtime.call(self.runtime.gateway.restore_transmitter_lora_defaults)
+            parameters = await self.runtime.call(
+                self.runtime.gateway.read_transmitter_lora_parameters
+            )
+        await self.runtime.publish(
+            EventName.transmitter_lora_parameters_changed, parameters.model_dump(mode="json")
+        )
+
+    async def read_gfsk(self) -> GfskParameters:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            return await self.runtime.call(self.runtime.gateway.read_transmitter_gfsk_parameters)
+
+    async def write_gfsk(self, parameters: GfskParameters) -> None:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            await self.runtime.call(
+                lambda: self.runtime.gateway.write_transmitter_gfsk_parameters(parameters)
+            )
+        await self.runtime.publish(
+            EventName.transmitter_gfsk_parameters_changed, parameters.model_dump(mode="json")
+        )
+
+    async def restore_gfsk(self) -> None:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            await self.runtime.call(self.runtime.gateway.restore_transmitter_gfsk_defaults)
+            parameters = await self.runtime.call(
+                self.runtime.gateway.read_transmitter_gfsk_parameters
+            )
+        await self.runtime.publish(
+            EventName.transmitter_gfsk_parameters_changed, parameters.model_dump(mode="json")
+        )
+
+    def _require_connected(self) -> None:
+        self.runtime.require_no_cross_device_operation()
+        if self.runtime.transmitter_connection.state != ConnectionState.connected:
+            raise ApplicationError(
+                "TRANSMITTER_NOT_CONNECTED",
+                409,
+                "Transmitter not connected",
+                "Transmitter must be connected for this operation.",
+            )
+
+    async def _publish_connection(self) -> None:
+        await self.runtime.publish(
+            EventName.transmitter_connection_changed,
+            self.runtime.transmitter_connection.model_dump(mode="json"),
+        )
