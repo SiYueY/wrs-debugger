@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Response
 
 from wrs_debugger.api.dependencies import transmitter_service
+from wrs_debugger.api.errors import PROBLEM_RESPONSES
 from wrs_debugger.models.connection import ConnectTransmitterRequest, TransmitterConnection
 from wrs_debugger.models.device import (
     PinResponse,
@@ -8,10 +9,15 @@ from wrs_debugger.models.device import (
     TransmitterInfo,
     WritePinRequest,
 )
-from wrs_debugger.models.radio import GfskParameters, LoRaParameters
+from wrs_debugger.models.gfsk import GfskParameters
+from wrs_debugger.models.lora import LoRaParameters
 from wrs_debugger.services.transmitter import TransmitterService
 
-router = APIRouter(prefix="/transmitter", tags=["transmitter"])
+router = APIRouter(
+    prefix="/transmitter",
+    tags=["transmitter"],
+    responses=PROBLEM_RESPONSES,
+)
 
 
 @router.get(

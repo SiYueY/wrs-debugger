@@ -1,13 +1,14 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.models.connection import ConnectionState
 from wrs_debugger.models.event import EventName
-from wrs_debugger.models.operation import Operation, OperationType
+from wrs_debugger.models.operation import Operation, OperationStage, OperationType
 from wrs_debugger.operations.manager import OperationManager
 from wrs_debugger.services.runtime import Runtime
 
-ProgressUpdate = Callable[[str, float], Awaitable[None]]
+ProgressUpdate = Callable[[OperationStage, float], Awaitable[None]]
 
 
 class FactoryBindingService:
@@ -19,22 +20,37 @@ class FactoryBindingService:
         self._require_connections()
 
         async def work(update: ProgressUpdate) -> None:
-            # This is the fixed cross-device lock order used by all V1 operations.
+            self._require_connections()
             async with self.runtime.transmitter_lock:
-                handle = await self.runtime.call(self.runtime.gateway.prepare_transmitter_binding)
+                handle = await self.runtime.call_transmitter(
+                    self.runtime.gateway.prepare_transmitter_binding
+                )
                 try:
-                    await update("preparing_transmitter", 0.3)
+                    await update(OperationStage.preparing_transmitter, 0.3)
                     async with self.runtime.receiver_lock:
-                        await self.runtime.call(
+                        await self.runtime.call_receiver(
                             lambda: self.runtime.gateway.prepare_receiver_binding(handle)
                         )
-                        await update("binding_receiver", 0.65)
+                        await update(OperationStage.binding_receiver, 0.65)
                         await self.runtime.call(lambda: self.runtime.gateway.verify_binding(handle))
-                    await update("verifying_binding", 0.9)
-                except BaseException:
-                    await self.runtime.call(lambda: self.runtime.gateway.rollback_binding(handle))
+                    await update(OperationStage.verifying_binding, 0.9)
+                except (Exception, asyncio.CancelledError):
+                    try:
+                        await update(OperationStage.rolling_back, 0.9)
+                        await self.runtime.call(
+                            lambda: self.runtime.gateway.rollback_binding(handle)
+                        )
+                    except ApplicationError as rollback_error:
+                        raise ApplicationError(
+                            "BINDING_ROLLBACK_FAILED",
+                            502,
+                            "Binding rollback failed",
+                            "Factory binding failed and rollback did not complete.",
+                        ) from rollback_error
                     raise
-            receiver_info = await self.runtime.call(self.runtime.gateway.read_receiver_info)
+            receiver_info = await self.runtime.call_receiver(
+                self.runtime.gateway.read_receiver_info
+            )
             await self.runtime.publish(
                 EventName.receiver_info_changed, receiver_info.model_dump(mode="json")
             )

@@ -5,7 +5,7 @@ from wrs_debugger.services.native_executor import ThreadedNativeExecutor
 class PybindWrsGateway:
     """Reserved seam for the future C++ pybind11 adapter.
 
-    The native module is intentionally not implemented until Receiver protocol clients exist.
+    The native module is intentionally unavailable until Receiver protocol clients exist.
     """
 
     def __init__(self) -> None:
@@ -13,7 +13,6 @@ class PybindWrsGateway:
 
     @staticmethod
     def native_executor() -> ThreadedNativeExecutor:
-        """Future pybind composition uses this executor, never the FastAPI event loop."""
         return ThreadedNativeExecutor()
 
 

@@ -1,4 +1,14 @@
+from pydantic import Field
+
 from wrs_debugger.models.base import ApiModel
+
+JsonScalar = str | int | float | bool | None
+
+
+class ValidationViolation(ApiModel):
+    field: str
+    code: str
+    context: dict[str, JsonScalar] = Field(default_factory=dict)
 
 
 class ProblemDetails(ApiModel):
@@ -8,4 +18,5 @@ class ProblemDetails(ApiModel):
     detail: str
     code: str
     request_id: str
-    context: dict[str, object]
+    context: dict[str, JsonScalar] = Field(default_factory=dict)
+    violations: list[ValidationViolation] | None = None

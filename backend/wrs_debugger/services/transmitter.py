@@ -14,7 +14,8 @@ from wrs_debugger.models.device import (
     WritePinRequest,
 )
 from wrs_debugger.models.event import EventName
-from wrs_debugger.models.radio import GfskParameters, LoRaParameters
+from wrs_debugger.models.gfsk import GfskParameters
+from wrs_debugger.models.lora import LoRaParameters
 from wrs_debugger.services.runtime import Runtime
 
 
@@ -46,14 +47,14 @@ class TransmitterService:
                     lambda: self.runtime.gateway.connect_transmitter(request.device)
                 )
             except ApplicationError as error:
-                self.runtime.set_transmitter_connection(
-                    TransmitterConnection(
-                        state=ConnectionState.failed,
-                        device=request.device,
-                        error=ConnectionError(code=error.code, detail=error.detail),
-                    )
+                await self._set_failed_connection(request.device, error.code, error.detail)
+                raise
+            except Exception:
+                await self._set_failed_connection(
+                    request.device,
+                    "INTERNAL_ERROR",
+                    "An unexpected error occurred while connecting the transmitter.",
                 )
-                await self._publish_connection()
                 raise
             self.runtime.set_transmitter_connection(
                 TransmitterConnection(
@@ -68,7 +69,27 @@ class TransmitterService:
     async def disconnect(self) -> TransmitterConnection:
         self.runtime.require_no_cross_device_operation()
         async with self.runtime.transmitter_lock:
-            await self.runtime.call(self.runtime.gateway.disconnect_transmitter)
+            if self.runtime.transmitter_connection.state != ConnectionState.connected:
+                self.runtime.set_transmitter_connection(
+                    TransmitterConnection(state=ConnectionState.disconnected)
+                )
+                await self._publish_connection()
+                return self.connection()
+            try:
+                await self.runtime.call(self.runtime.gateway.disconnect_transmitter)
+            except ApplicationError as error:
+                if error.code not in {"TRANSMITTER_DISCONNECTED", "TRANSMITTER_NOT_CONNECTED"}:
+                    await self._set_failed_connection(
+                        self.runtime.transmitter_connection.device, error.code, error.detail
+                    )
+                    raise
+            except Exception:
+                await self._set_failed_connection(
+                    self.runtime.transmitter_connection.device,
+                    "INTERNAL_ERROR",
+                    "An unexpected error occurred while disconnecting the transmitter.",
+                )
+                raise
             self.runtime.set_transmitter_connection(
                 TransmitterConnection(state=ConnectionState.disconnected)
             )
@@ -78,13 +99,13 @@ class TransmitterService:
     async def info(self) -> TransmitterInfo:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            return await self.runtime.call(self.runtime.gateway.read_transmitter_info)
+            return await self.runtime.call_transmitter(self.runtime.gateway.read_transmitter_info)
 
     async def read_pin(self) -> PinResponse:
         self._require_connected()
         async with self.runtime.transmitter_lock:
             return PinResponse(
-                pin=await self.runtime.call(self.runtime.gateway.read_transmitter_pin)
+                pin=await self.runtime.call_transmitter(self.runtime.gateway.read_transmitter_pin)
             )
 
     async def write_pin(self, request: WritePinRequest) -> None:
@@ -97,59 +118,55 @@ class TransmitterService:
                 "PIN 000000 is reserved for the protocol read request.",
             )
         async with self.runtime.transmitter_lock:
-            await self.runtime.call(lambda: self.runtime.gateway.write_transmitter_pin(request.pin))
+            await self.runtime.call_transmitter(
+                lambda: self.runtime.gateway.write_transmitter_pin(request.pin)
+            )
 
     async def read_lora(self) -> LoRaParameters:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            return await self.runtime.call(self.runtime.gateway.read_transmitter_lora_parameters)
+            return await self.runtime.call_transmitter(
+                self.runtime.gateway.read_transmitter_lora_parameters
+            )
 
     async def write_lora(self, parameters: LoRaParameters) -> None:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            await self.runtime.call(
+            await self.runtime.call_transmitter(
                 lambda: self.runtime.gateway.write_transmitter_lora_parameters(parameters)
             )
-        await self.runtime.publish(
-            EventName.transmitter_lora_parameters_changed, parameters.model_dump(mode="json")
-        )
+        await self.runtime.publish(EventName.transmitter_lora_parameters_changed, {})
 
     async def restore_lora(self) -> None:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            await self.runtime.call(self.runtime.gateway.restore_transmitter_lora_defaults)
-            parameters = await self.runtime.call(
-                self.runtime.gateway.read_transmitter_lora_parameters
+            await self.runtime.call_transmitter(
+                self.runtime.gateway.restore_transmitter_lora_defaults
             )
-        await self.runtime.publish(
-            EventName.transmitter_lora_parameters_changed, parameters.model_dump(mode="json")
-        )
+        await self.runtime.publish(EventName.transmitter_lora_parameters_changed, {})
 
     async def read_gfsk(self) -> GfskParameters:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            return await self.runtime.call(self.runtime.gateway.read_transmitter_gfsk_parameters)
+            return await self.runtime.call_transmitter(
+                self.runtime.gateway.read_transmitter_gfsk_parameters
+            )
 
     async def write_gfsk(self, parameters: GfskParameters) -> None:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            await self.runtime.call(
+            await self.runtime.call_transmitter(
                 lambda: self.runtime.gateway.write_transmitter_gfsk_parameters(parameters)
             )
-        await self.runtime.publish(
-            EventName.transmitter_gfsk_parameters_changed, parameters.model_dump(mode="json")
-        )
+        await self.runtime.publish(EventName.transmitter_gfsk_parameters_changed, {})
 
     async def restore_gfsk(self) -> None:
         self._require_connected()
         async with self.runtime.transmitter_lock:
-            await self.runtime.call(self.runtime.gateway.restore_transmitter_gfsk_defaults)
-            parameters = await self.runtime.call(
-                self.runtime.gateway.read_transmitter_gfsk_parameters
+            await self.runtime.call_transmitter(
+                self.runtime.gateway.restore_transmitter_gfsk_defaults
             )
-        await self.runtime.publish(
-            EventName.transmitter_gfsk_parameters_changed, parameters.model_dump(mode="json")
-        )
+        await self.runtime.publish(EventName.transmitter_gfsk_parameters_changed, {})
 
     def _require_connected(self) -> None:
         self.runtime.require_no_cross_device_operation()
@@ -160,6 +177,18 @@ class TransmitterService:
                 "Transmitter not connected",
                 "Transmitter must be connected for this operation.",
             )
+
+    async def _set_failed_connection(
+        self, device: str | None, code: str, detail: str
+    ) -> None:
+        self.runtime.set_transmitter_connection(
+            TransmitterConnection(
+                state=ConnectionState.failed,
+                device=device,
+                error=ConnectionError(code=code, detail=detail),
+            )
+        )
+        await self._publish_connection()
 
     async def _publish_connection(self) -> None:
         await self.runtime.publish(

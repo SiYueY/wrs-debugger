@@ -1,7 +1,6 @@
-from datetime import datetime
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field
 
 from wrs_debugger.models.base import ApiModel
 
@@ -21,14 +20,14 @@ class ConnectionError(ApiModel):
 class TransmitterConnection(ApiModel):
     state: ConnectionState
     device: str | None = None
-    connected_at: datetime | None = None
+    connected_at: AwareDatetime | None = None
     error: ConnectionError | None = None
 
 
 class ReceiverConnection(ApiModel):
     state: ConnectionState
     domain_id: int | None = Field(default=None, ge=0)
-    connected_at: datetime | None = None
+    connected_at: AwareDatetime | None = None
     error: ConnectionError | None = None
 
 

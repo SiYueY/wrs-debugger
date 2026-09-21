@@ -1,19 +1,25 @@
 from fastapi import APIRouter, Depends, Response
 
 from wrs_debugger.api.dependencies import binding_service, receiver_service, synchronization_service
+from wrs_debugger.api.errors import PROBLEM_RESPONSES
 from wrs_debugger.models.connection import (
     ConnectReceiverRequest,
     ReceiverConnection,
     ReceiverSettings,
 )
 from wrs_debugger.models.device import ReceiverInfo
+from wrs_debugger.models.gfsk import GfskParameters
+from wrs_debugger.models.lora import LoRaParameters
 from wrs_debugger.models.operation import OperationCreatedResponse
-from wrs_debugger.models.radio import GfskParameters, LoRaParameters
 from wrs_debugger.services.binding import FactoryBindingService
 from wrs_debugger.services.receiver import ReceiverService
 from wrs_debugger.services.synchronization import SynchronizationService
 
-router = APIRouter(prefix="/receiver", tags=["receiver"])
+router = APIRouter(
+    prefix="/receiver",
+    tags=["receiver"],
+    responses=PROBLEM_RESPONSES,
+)
 
 
 @router.get("/settings", response_model=ReceiverSettings, operation_id="get_receiver_settings")

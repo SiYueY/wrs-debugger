@@ -1,11 +1,10 @@
 from pydantic import Field
 
 from wrs_debugger.models.base import ApiModel
-from wrs_debugger.models.connection import ConnectionState
 
 
 class SerialPortInfo(ApiModel):
-    device: str
+    device: str = Field(min_length=1)
     description: str | None = None
     manufacturer: str | None = None
     product: str | None = None
@@ -27,7 +26,6 @@ class TransmitterInfo(ApiModel):
 
 class ReceiverInfo(ApiModel):
     bound_device_id: str | None = None
-    connection_state: ConnectionState
 
 
 class PinResponse(ApiModel):
