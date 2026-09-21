@@ -13,20 +13,13 @@ constexpr std::size_t kResultOffset = 39;
 
 std::uint16_t ParamFlags::to_raw() const noexcept {
     std::uint16_t raw_flags = 0;
-    if (band == Band::MHz915)
-        raw_flags |= 0x0001;
-    if (!crc_enabled)
-        raw_flags |= 0x0002;
-    if (!estop_enabled)
-        raw_flags |= 0x0004;
-    if (!heartbeat_enabled)
-        raw_flags |= 0x0008;
-    if (!one_to_one)
-        raw_flags |= 0x0010;
-    if (channel_scan)
-        raw_flags |= 0x0020;
-    if (radio_type == RadioType::GFSK)
-        raw_flags |= 0x4000;
+    if (band == Band::MHz915) raw_flags |= 0x0001;
+    if (!crc_enabled) raw_flags |= 0x0002;
+    if (!estop_enabled) raw_flags |= 0x0004;
+    if (!heartbeat_enabled) raw_flags |= 0x0008;
+    if (!one_to_one) raw_flags |= 0x0010;
+    if (channel_scan) raw_flags |= 0x0020;
+    if (radio_type == RadioType::GFSK) raw_flags |= 0x4000;
     return raw_flags;
 }
 
@@ -152,13 +145,13 @@ Bytes GfskParamFrame::to_bytes() const noexcept {
     write_le16(bytes.bytes() + 19, heartbeat_interval);
     bytes[21] = heartbeat_loss;
     bytes[22] = bandwidth;
-    bytes[23] = bitrate;
-    bytes[24] = freq_deviation;
-    bytes[25] = pulse_shaping;
-    bytes[26] = preamble_len;
-    write_le16(bytes.bytes() + 27, sync_word);
+    write_le32(bytes.bytes() + 23, bitrate);
+    write_le32(bytes.bytes() + 27, freq_deviation);
+    bytes[31] = pulse_shaping;
+    bytes[32] = preamble_len;
+    write_le16(bytes.bytes() + 33, sync_word);
     for (std::size_t index = 0; index < reserved.size(); ++index)
-        bytes[29 + index] = reserved[index];
+        bytes[35 + index] = reserved[index];
     bytes[kResultOffset] = result_code;
     fill_crc(bytes);
     return bytes;
@@ -178,13 +171,13 @@ GfskParamFrame GfskParamFrame::from_bytes(const Bytes& bytes) noexcept {
     frame.heartbeat_interval = read_le16(bytes.bytes() + 19);
     frame.heartbeat_loss = bytes[21];
     frame.bandwidth = bytes[22];
-    frame.bitrate = bytes[23];
-    frame.freq_deviation = bytes[24];
-    frame.pulse_shaping = bytes[25];
-    frame.preamble_len = bytes[26];
-    frame.sync_word = read_le16(bytes.bytes() + 27);
+    frame.bitrate = read_le32(bytes.bytes() + 23);
+    frame.freq_deviation = read_le32(bytes.bytes() + 27);
+    frame.pulse_shaping = bytes[31];
+    frame.preamble_len = bytes[32];
+    frame.sync_word = read_le16(bytes.bytes() + 33);
     for (std::size_t index = 0; index < frame.reserved.size(); ++index)
-        frame.reserved[index] = bytes[29 + index];
+        frame.reserved[index] = bytes[35 + index];
     frame.result_code = bytes[kResultOffset];
     frame.crc16 = read_le16(bytes.bytes() + kFrameBodySize);
     return frame;
@@ -193,8 +186,7 @@ GfskParamFrame GfskParamFrame::from_bytes(const Bytes& bytes) noexcept {
 Bytes PinFrame::to_bytes() const noexcept {
     Bytes bytes{};
     bytes[0] = cmd;
-    for (std::size_t index = 0; index < pin.size(); ++index)
-        bytes[1 + index] = pin[index];
+    for (std::size_t index = 0; index < pin.size(); ++index) bytes[1 + index] = pin[index];
     for (std::size_t index = 0; index < reserved1.size(); ++index)
         bytes[7 + index] = reserved1[index];
     write_le32(bytes.bytes() + 12, transaction_id);
@@ -225,8 +217,7 @@ Bytes DeviceKeyFrame::to_bytes() const noexcept {
     bytes[0] = cmd;
     for (std::size_t index = 0; index < device_id.size(); ++index)
         bytes[1 + index] = device_id[index];
-    for (std::size_t index = 0; index < kbind.size(); ++index)
-        bytes[4 + index] = kbind[index];
+    for (std::size_t index = 0; index < kbind.size(); ++index) bytes[4 + index] = kbind[index];
     write_le32(bytes.bytes() + 20, transaction_id);
     for (std::size_t index = 0; index < reserved.size(); ++index)
         bytes[24 + index] = reserved[index];

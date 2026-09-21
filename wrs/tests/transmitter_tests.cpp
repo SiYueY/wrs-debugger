@@ -72,16 +72,17 @@ void test_gfsk_frame() {
     frame.transaction_id = 7;
     frame.param_flags = 0x4000;
     frame.bandwidth = 2;
-    frame.bitrate = 50;
-    frame.freq_deviation = 25;
+    frame.bitrate = 50000;
+    frame.freq_deviation = 25000;
     frame.pulse_shaping = 0x09;
     frame.preamble_len = 16;
     frame.sync_word = 0x1424;
     const auto raw = frame.to_bytes();
-    assert(raw[22] == 2 && raw[23] == 50 && raw[24] == 25 && raw[25] == 0x09);
-    assert(raw[26] == 16 && raw[27] == 0x24 && raw[28] == 0x14 && has_valid_crc(raw));
+    assert(raw[22] == 2 && read_le32(raw.bytes() + 23) == 50000);
+    assert(read_le32(raw.bytes() + 27) == 25000 && raw[31] == 0x09 && raw[32] == 16);
+    assert(raw[33] == 0x24 && raw[34] == 0x14 && has_valid_crc(raw));
     const auto round_trip = GfskParamFrame::from_bytes(raw);
-    assert(round_trip.bitrate == 50 && round_trip.freq_deviation == 25);
+    assert(round_trip.bitrate == 50000 && round_trip.freq_deviation == 25000);
 }
 
 void test_pin_device_key_and_sdo() {
@@ -123,8 +124,7 @@ bool read_all(int fd, std::uint8_t* bytes, std::size_t size) {
             received += static_cast<std::size_t>(result);
             continue;
         }
-        if (result < 0 && errno == EINTR)
-            continue;
+        if (result < 0 && errno == EINTR) continue;
         return false;
     }
     return true;
@@ -137,8 +137,7 @@ bool write_all(int fd, const std::uint8_t* bytes, std::size_t size) {
             sent += static_cast<std::size_t>(result);
             continue;
         }
-        if (result < 0 && errno == EINTR)
-            continue;
+        if (result < 0 && errno == EINTR) continue;
         return false;
     }
     return true;
@@ -213,6 +212,80 @@ void test_client_rejects_invalid_responses() {
     test_client_response_validation(BadResponse::Transaction, Error::TimedOut);
     test_client_response_validation(BadResponse::Result, Error::DeviceRejected);
 }
+
+void test_client_reads_pin_with_ascii_zero_request() {
+    int master = -1;
+    int slave = -1;
+    char path[128]{};
+    assert(::openpty(&master, &slave, path, nullptr, nullptr) == 0);
+    std::thread device([master] {
+        Bytes request{};
+        for (std::uint32_t value = 1; value <= 3; ++value) {
+            assert(read_all(master, request.bytes(), request.size()));
+            const auto response = successful_sdo_response(request, value);
+            assert(write_all(master, response.bytes(), response.size()));
+        }
+        assert(read_all(master, request.bytes(), request.size()));
+        assert(request[0] == static_cast<std::uint8_t>(SystemCmd::PinCfgReq));
+        for (std::size_t index = 1; index <= 6; ++index)
+            assert(request[index] == static_cast<std::uint8_t>('0'));
+
+        PinFrame response{};
+        response.cmd = static_cast<std::uint8_t>(SystemCmd::PinCfgRsp);
+        response.pin = {'1', '2', '3', '4', '5', '6'};
+        response.transaction_id = read_le32(request.bytes() + 12);
+        const auto response_bytes = response.to_bytes();
+        assert(write_all(master, response_bytes.bytes(), response_bytes.size()));
+    });
+    Client client{};
+    assert(client.open(path, std::chrono::milliseconds(100), std::chrono::milliseconds(0), 1));
+    const auto result = client.read_pin();
+    assert(result);
+    assert((result.value().pin == std::array<std::uint8_t, 6>{'1', '2', '3', '4', '5', '6'}));
+    (void)client.close();
+    device.join();
+    assert(::close(master) == 0);
+    assert(::close(slave) == 0);
+}
+
+void test_client_rejects_invalid_gfsk_parameters() {
+    int master = -1;
+    int slave = -1;
+    char path[128]{};
+    assert(::openpty(&master, &slave, path, nullptr, nullptr) == 0);
+    std::thread device([master] {
+        Bytes request{};
+        for (std::uint32_t value = 1; value <= 3; ++value) {
+            assert(read_all(master, request.bytes(), request.size()));
+            const auto response = successful_sdo_response(request, value);
+            assert(write_all(master, response.bytes(), response.size()));
+        }
+    });
+    Client client{};
+    assert(client.open(path, std::chrono::milliseconds(100), std::chrono::milliseconds(0), 1));
+
+    GfskParamFrame frame{};
+    frame.param_flags = 0x4000;
+    frame.tx_power = 10;
+    frame.freq_offset = 250;
+    frame.payload_len = 12;
+    frame.rssi_threshold = 110;
+    frame.heartbeat_interval = 200;
+    frame.heartbeat_loss = 3;
+    frame.bandwidth = 1;
+    frame.bitrate = 599;
+    frame.freq_deviation = 25000;
+    frame.pulse_shaping = 0x09;
+    frame.preamble_len = 16;
+    frame.sync_word = 0x1424;
+    const auto result = client.write_gfsk_parameters(frame);
+    assert(!result && result.error() == Error::InvalidArgument);
+
+    (void)client.close();
+    device.join();
+    assert(::close(master) == 0);
+    assert(::close(slave) == 0);
+}
 }  // namespace
 
 int main() {
@@ -221,4 +294,6 @@ int main() {
     test_gfsk_frame();
     test_pin_device_key_and_sdo();
     test_client_rejects_invalid_responses();
+    test_client_reads_pin_with_ascii_zero_request();
+    test_client_rejects_invalid_gfsk_parameters();
 }

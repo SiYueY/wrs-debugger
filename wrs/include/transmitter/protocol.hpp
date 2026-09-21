@@ -22,21 +22,13 @@ constexpr std::size_t kFrameCrcSize = 2;
 struct Bytes final {
     std::array<std::uint8_t, kFrameSize> data{};
 
-    [[nodiscard]] std::uint8_t* bytes() noexcept {
-        return data.data();
-    }
-    [[nodiscard]] const std::uint8_t* bytes() const noexcept {
-        return data.data();
-    }
-    [[nodiscard]] std::uint8_t& operator[](std::size_t index) noexcept {
-        return data[index];
-    }
+    [[nodiscard]] std::uint8_t* bytes() noexcept { return data.data(); }
+    [[nodiscard]] const std::uint8_t* bytes() const noexcept { return data.data(); }
+    [[nodiscard]] std::uint8_t& operator[](std::size_t index) noexcept { return data[index]; }
     [[nodiscard]] const std::uint8_t& operator[](std::size_t index) const noexcept {
         return data[index];
     }
-    [[nodiscard]] static constexpr std::size_t size() noexcept {
-        return kFrameSize;
-    }
+    [[nodiscard]] static constexpr std::size_t size() noexcept { return kFrameSize; }
 };
 static_assert(sizeof(Bytes) == kFrameSize, "Bytes must be exactly 42 bytes");
 
@@ -47,7 +39,7 @@ enum class SystemCmd : std::uint8_t {
     FindReq = 0x03,        // 寻机请求。
     ParamReadReq = 0x04,   // 读取通信参数或 SDO 对象请求。
     ParamWriteReq = 0x05,  // 写入通信参数或 SDO 对象请求。
-    PinCfgReq = 0x07,      // PIN 配置（全零 PIN 表示读取）请求。
+    PinCfgReq = 0x07,      // PIN 配置（ASCII "000000" 表示读取）请求。
     BindRsp = 0x81,        // 绑定响应。
     UnbindRsp = 0x82,      // 解绑响应。
     FindRsp = 0x83,        // 寻机响应。
@@ -101,7 +93,10 @@ struct ParamFlags final {
 
     /** 将语义化字段编码为协议原始位图。 */
     [[nodiscard]] std::uint16_t to_raw() const noexcept;
-    /** 从协议原始位图解码语义化字段；未知无线类型按 LoRa 处理。 */
+    /**
+     * 从协议原始位图解码语义化字段；保留无线类型会映射为 LoRa。
+     * 调用方处理线上输入前仍须验证 bit15..14 和 bit13..6。
+     */
     [[nodiscard]] static ParamFlags from_raw(std::uint16_t raw_flags) noexcept;
 };
 
@@ -158,8 +153,8 @@ struct LoRaParamFrame final {
 /**
  * @brief GFSK 通信参数帧。
  *
- * Byte0–21、Byte29–41 与 LoRaParamFrame 相同；Byte22–28 的含义按 GFSK
- * 解释，码率和频偏均为单字节协议值，而不是宿主端的 32 位物理单位。
+ * Byte0–21、Byte35–41 与 LoRaParamFrame 相同；Byte22–34 的含义按 GFSK
+ * 解释，其中码率和频偏均以 32 位物理单位的小端序传输。
  */
 struct GfskParamFrame final {
     std::uint8_t cmd{};              // Byte0：参数读/写命令。
@@ -171,17 +166,17 @@ struct GfskParamFrame final {
     std::uint16_t freq_offset{};     // Byte15–16：中心频率偏移，单位 kHz。
     std::uint8_t payload_len{};      // Byte17：无线负载长度，固定为 12。
     std::uint8_t rssi_threshold{};   // Byte18：RSSI 接收门限的协议值。
-    std::uint16_t heartbeat_interval{};       // Byte19–20：心跳周期，单位 ms。
-    std::uint8_t heartbeat_loss{};            // Byte21：允许连续丢失的心跳数量。
-    std::uint8_t bandwidth{};                 // Byte22：GFSK 带宽协议值。
-    std::uint8_t bitrate{};                   // Byte23：GFSK 码率协议值。
-    std::uint8_t freq_deviation{};            // Byte24：GFSK 频偏协议值。
-    std::uint8_t pulse_shaping{};             // Byte25：脉冲整形；默认值常为 0x09。
-    std::uint8_t preamble_len{};              // Byte26：前导码长度，单位 bit。
-    std::uint16_t sync_word{};                // Byte27–28：同步字；常用值 0x1424。
-    std::array<std::uint8_t, 10> reserved{};  // Byte29–38：保留，应为 0。
-    std::uint8_t result_code{};               // Byte39：ResultCode。
-    std::uint16_t crc16{};                    // Byte40–41：小端 CRC16-XMODEM。
+    std::uint16_t heartbeat_interval{};      // Byte19–20：心跳周期，单位 ms。
+    std::uint8_t heartbeat_loss{};           // Byte21：允许连续丢失的心跳数量。
+    std::uint8_t bandwidth{};                // Byte22：GFSK 带宽协议值。
+    std::uint32_t bitrate{};                 // Byte23–26：码率，单位 bps。
+    std::uint32_t freq_deviation{};          // Byte27–30：频偏，单位 Hz。
+    std::uint8_t pulse_shaping{};            // Byte31：脉冲整形；默认值常为 0x09。
+    std::uint8_t preamble_len{};             // Byte32：前导码长度，单位 bit。
+    std::uint16_t sync_word{};               // Byte33–34：同步字；常用值 0x1424。
+    std::array<std::uint8_t, 4> reserved{};  // Byte35–38：保留，应为 0。
+    std::uint8_t result_code{};              // Byte39：ResultCode。
+    std::uint16_t crc16{};                   // Byte40–41：小端 CRC16-XMODEM。
     /** 序列化并用 Byte0–39 自动计算并填写 CRC 字段。 */
     [[nodiscard]] Bytes to_bytes() const noexcept;
     /** 原样反序列化；如需完整性校验，请先调用 has_valid_crc()。 */
@@ -191,12 +186,12 @@ struct GfskParamFrame final {
 /**
  * @brief PIN 配置帧。
  *
- * Byte1–6 是六个 ASCII 数字。请求时全零表示读取当前 PIN；写入时必须
- * 使用六位数字，Client 会拒绝保留的全零值。
+ * Byte1–6 是六个 ASCII 数字。请求时 ASCII "000000" 表示读取当前 PIN；
+ * 写入时必须使用其他六位数字，Client 会拒绝保留值。
  */
 struct PinFrame final {
     std::uint8_t cmd{};                 // Byte0：PinCfgReq 或 PinCfgRsp。
-    std::array<std::uint8_t, 6> pin{};  // Byte1–6：ASCII PIN；全零仅用于读取请求。
+    std::array<std::uint8_t, 6> pin{};  // Byte1–6：ASCII PIN；"000000" 用于读取请求。
     std::array<std::uint8_t, 5> reserved1{};   // Byte7–11：保留，应为 0。
     std::uint32_t transaction_id{};            // Byte12–15：事务 ID，响应回显。
     std::array<std::uint8_t, 23> reserved2{};  // Byte16–38：保留，应为 0。
@@ -232,14 +227,15 @@ struct DeviceKeyFrame final {
  * @brief 稀疏 SDO 帧。
  *
  * SDO 的对象索引占 Byte5–6：低 12 位为对象地址，高 4 位为 SdoStatus。
- * Byte11–38 是保留区，Client 仅接受全零响应。
+ * Byte11–38 在原协议中没有单独的 SDO 语义；Client 生成请求时置零，
+ * 接收响应时原样保留而不据此拒绝有效 SDO 结果。
  */
 struct SdoFrame final {
     std::uint8_t cmd{};              // Byte0：参数读/写命令。
     std::uint32_t transaction_id{};  // Byte1–4：非零事务 ID，响应回显。
     std::uint16_t object_index{};    // Byte5–6：低 12 位对象，高 4 位 SDO 状态。
     std::uint32_t object_data{};     // Byte7–10：对象读回值或待写值。
-    std::array<std::uint8_t, 28> reserved{};  // Byte11–38：保留，应为 0。
+    std::array<std::uint8_t, 28> reserved{};  // Byte11–38：SDO 未解释载荷。
     std::uint8_t result_code{};               // Byte39：ResultCode。
     std::uint16_t crc16{};                    // Byte40–41：小端 CRC16-XMODEM。
     /** 序列化并用 Byte0–39 自动计算并填写 CRC 字段。 */
