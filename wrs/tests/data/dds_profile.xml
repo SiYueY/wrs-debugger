@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<dds xmlns="http://www.eprosima.com" >
+    <profiles>
+        <transport_descriptors>
+            <transport_descriptor>
+                <transport_id>udpv4_nonblocking_transport</transport_id>
+                <type>UDPv4</type>
+                <sendBufferSize>16777216</sendBufferSize>
+                <receiveBufferSize>16777216</receiveBufferSize>
+                <non_blocking_send>true</non_blocking_send>
+                <interfaceWhiteList>
+                    <!-- <address>0.0.0.0</address> 配置主机需要绑定的网卡ip -->
+                </interfaceWhiteList>
+            </transport_descriptor>
+            <transport_descriptor>
+            <transport_id>shm_transport</transport_id>
+            <type>SHM</type>
+            <segment_size>16777216</segment_size>
+            </transport_descriptor>
+        </transport_descriptors>
+
+        <!-- DomainParticipant -->
+        <participant profile_name="participant_profile" is_default_profile="true">
+            <domainId>0</domainId>
+            <rtps>
+                <userTransports>
+                    <transport_id>udpv4_nonblocking_transport</transport_id>
+                    <!-- <transport_id>shm_transport</transport_id> -->
+                </userTransports>
+                <useBuiltinTransports>false</useBuiltinTransports>
+
+                <!-- 这两个参数用于 RTPS 参与者（Participant）之间的存活检测机制，属于 PDP（Participant Discovery Protocol） 的一部分 -->
+                <!-- leaseDuration: 租约有效期，如果在这个时间内没有收到对方的心跳（DATA(p)），则认为对方已经失联（死亡） -->
+                <!-- leaseAnnouncement 心跳发送间隔：每个参与者定期广播自己的存活信息（DATA(p)）的频率 -->
+                <!--
+                <builtin>
+                    <discovery_config>
+                        <leaseDuration>
+                            <sec>1</sec>
+                            <nanosec>30</nanosec>
+                        </leaseDuration>
+                        <leaseAnnouncement>
+                            <sec>1</sec>
+                        </leaseAnnouncement>
+                    </discovery_config>
+                </builtin>
+                -->
+            </rtps>
+        </participant>
+
+        <topic profile_name="topic_profile">
+            <historyQos>
+                <kind>KEEP_LAST</kind>
+                <depth>2</depth>
+            </historyQos>
+            <resourceLimitsQos>
+                <max_samples>2</max_samples>
+                <max_instances>1</max_instances>
+                <max_samples_per_instance>2</max_samples_per_instance>
+            </resourceLimitsQos>
+        </topic>
+
+        <!-- DateWriter -->
+        <data_writer profile_name="datawriter_profile">
+            <qos>
+                <data_sharing>
+                    <kind>OFF</kind>
+                </data_sharing>
+                <publishMode>
+                <kind>ASYNCHRONOUS</kind>
+                </publishMode>
+                <reliability>
+                    <kind>BEST_EFFORT</kind>
+                    <max_blocking_time>
+                        <nanosec>5000000</nanosec>
+                    </max_blocking_time>
+                </reliability>
+                <liveliness>
+                    <kind>AUTOMATIC</kind>
+                    <!--租约有效期: 如果 DataReader 在 1.000000000 秒 内没有收到来自该 DataWriter 的任何存活声明（或者正常的数据），就会认为该 DataWriter 已经失效（可能是崩溃、网络断开等）-->
+                    <lease_duration>
+                        <sec>1</sec>
+                        <nanosec>0</nanosec>
+                    </lease_duration>
+                    <!--存活声明的发送间隔。DataWriter 每隔 300 毫秒 主动向所有匹配的 DataReader 发送一个特殊的“我还活着”的心跳包（即使没有新数据发布）-->
+                    <announcement_period>
+                        <sec>0</sec>
+                        <nanosec>300000000</nanosec>
+                    </announcement_period>
+                </liveliness>
+            </qos>
+        </data_writer>
+
+        <!-- DateReader -->
+        <data_reader profile_name="datareader_profile">
+            <qos>
+                <data_sharing>
+                    <kind>OFF</kind>
+                </data_sharing>
+                <reliability>
+                    <kind>BEST_EFFORT</kind>
+                    <max_blocking_time>
+                        <nanosec>5000000</nanosec>
+                    </max_blocking_time>
+                </reliability>
+            </qos>
+        </data_reader>
+
+        <!-- Service/Action DateWriter -->
+        <data_writer profile_name="service_datawriter_profile">
+            <qos>
+                <data_sharing>
+                    <kind>OFF</kind>
+                </data_sharing>
+                <publishMode>
+                <kind>ASYNCHRONOUS</kind>
+                </publishMode>
+                <reliability>
+                    <kind>RELIABLE</kind>
+                    <max_blocking_time>
+                        <nanosec>5000000</nanosec>
+                    </max_blocking_time>
+                </reliability>
+                <liveliness>
+                    <kind>AUTOMATIC</kind>
+                    <lease_duration>
+                        <sec>1</sec>
+                        <nanosec>0</nanosec>
+                    </lease_duration>
+                    <announcement_period>
+                        <sec>0</sec>
+                        <nanosec>300000000</nanosec>
+                    </announcement_period>
+                </liveliness>
+            </qos>
+        </data_writer>
+
+        <!-- Service/Action DateReader -->
+        <data_reader profile_name="service_datareader_profile">
+            <qos>
+                <data_sharing>
+                    <kind>OFF</kind>
+                </data_sharing>
+                <reliability>
+                    <kind>RELIABLE</kind>
+                    <max_blocking_time>
+                        <nanosec>5000000</nanosec>
+                    </max_blocking_time>
+                </reliability>
+            </qos>
+        </data_reader>
+    </profiles>
+</dds>
+<log>
+    <level>Error</level>
+</log>
