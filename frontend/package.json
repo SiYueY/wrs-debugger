@@ -11,7 +11,7 @@
     "dev:web": "pnpm --filter @wrs-debugger/web dev",
     "dev:desktop": "concurrently -k -n web,desktop \"pnpm --filter @wrs-debugger/web dev\" \"pnpm --filter @wrs-debugger/desktop dev\"",
     "build:web": "pnpm --filter @wrs-debugger/web build",
-    "build:desktop": "pnpm --filter @wrs-debugger/web build && pnpm --filter @wrs-debugger/desktop build",
+    "build:desktop": "pnpm build:web && pnpm --filter @wrs-debugger/desktop build",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

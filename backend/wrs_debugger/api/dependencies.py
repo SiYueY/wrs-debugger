@@ -3,6 +3,7 @@ from typing import cast
 from fastapi import Request
 
 from wrs_debugger.services.binding import FactoryBindingService
+from wrs_debugger.services.diagnostics import DiagnosticsService
 from wrs_debugger.services.receiver import ReceiverService
 from wrs_debugger.services.synchronization import SynchronizationService
 from wrs_debugger.services.transmitter import TransmitterService
@@ -22,3 +23,7 @@ def synchronization_service(request: Request) -> SynchronizationService:
 
 def binding_service(request: Request) -> FactoryBindingService:
     return cast(FactoryBindingService, request.app.state.binding_service)
+
+
+def diagnostics_service(request: Request) -> DiagnosticsService:
+    return cast(DiagnosticsService, request.app.state.diagnostics_service)

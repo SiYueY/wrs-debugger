@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, WebSocket
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
 from wrs_debugger import __version__
 from wrs_debugger.api.errors import (
@@ -11,7 +12,7 @@ from wrs_debugger.api.errors import (
     unexpected_error_handler,
     validation_error_handler,
 )
-from wrs_debugger.api.routers import operations, receiver, system, transmitter
+from wrs_debugger.api.routers import diagnostics, operations, receiver, system, transmitter
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.base import WrsGateway
 from wrs_debugger.gateway.mock import MockWrsGateway
@@ -22,6 +23,7 @@ from wrs_debugger.models.connection import (
 )
 from wrs_debugger.operations.manager import OperationManager
 from wrs_debugger.services.binding import FactoryBindingService
+from wrs_debugger.services.diagnostics import DiagnosticsService
 from wrs_debugger.services.native_executor import InlineMockExecutor
 from wrs_debugger.services.receiver import ReceiverService
 from wrs_debugger.services.runtime import Runtime, StateMirror
@@ -67,6 +69,7 @@ def create_app(
             runtime, operation_manager
         )
         application.state.binding_service = FactoryBindingService(runtime, operation_manager)
+        application.state.diagnostics_service = DiagnosticsService(runtime)
         application.state.websocket_hub = hub
         application.state.backend_settings = configured_settings
         application.state.backend_instance_id = uuid4().hex
@@ -76,10 +79,17 @@ def create_app(
             await operation_manager.shutdown()
 
     application = FastAPI(title="WRS Debugger API", version=__version__, lifespan=lifespan)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["null", "http://127.0.0.1:5173"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     application.add_exception_handler(ApplicationError, application_error_handler)
     application.add_exception_handler(RequestValidationError, validation_error_handler)
     application.add_exception_handler(Exception, unexpected_error_handler)
     application.include_router(system.router, prefix="/api/v1")
+    application.include_router(diagnostics.router, prefix="/api/v1")
     application.include_router(transmitter.router, prefix="/api/v1")
     application.include_router(receiver.router, prefix="/api/v1")
     application.include_router(operations.router, prefix="/api/v1")

@@ -1,16 +1,24 @@
 :root {
-  font-family: Inter, 'Noto Sans SC', 'Segoe UI', sans-serif;
-  color: #243044;
-  background: #f4f6f8;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  --app-border: #dfe4ea;
-  --app-muted: #6c7787;
-  --app-panel: #ffffff;
-  --app-bg: #f4f6f8;
-  --app-primary: #2563a8;
+  font-family: system-ui, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: #000;
+  --toolbar: #a1a2a5;
+  --outer: #f6f7f9;
+  --inner: #d9dadb;
+  --panel: #fff;
+  --track: #d9dadb;
+  --brand: #363b49;
+  --tab: #bbbbbb;
+  --input-border: #c8c8c8;
+  --ok: #008000;
+  --danger: #d9534f;
+  --toolbar-height: 60px;
+  --navigation-height: 40px;
+  --navigation-width: 140px;
+  --button-height: 30px;
+  --button-width: 100px;
+  --parameter-button-width: 90px;
+  --field-height: 26px;
 }
 * {
   box-sizing: border-box;
@@ -18,16 +26,44 @@
 html,
 body,
 #app {
-  min-width: 1024px;
-  min-height: 100vh;
+  width: 100%;
+  height: 100%;
   margin: 0;
 }
 body {
-  background: var(--app-bg);
+  overflow: hidden;
+  background: var(--outer);
 }
-button,
-input,
-select,
-textarea {
+.panel {
+  padding: 12px 14px 10px;
+  border-radius: 10px;
+  background: var(--panel);
+}
+.panel-tag {
+  display: inline-block;
+  margin-bottom: 12px;
+  padding: 2px 12px;
+  border-radius: 4px;
+  background: #666;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.dbg-btn {
+  height: var(--button-height);
+  min-width: var(--button-width);
+  padding: 0 12px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--brand);
+  color: #fff;
   font: inherit;
+  cursor: pointer;
+}
+.dbg-btn:hover:not(:disabled) {
+  background: #2c313c;
+}
+.dbg-btn:disabled {
+  background: #bbb;
+  cursor: not-allowed;
 }

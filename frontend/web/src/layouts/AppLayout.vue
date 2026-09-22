@@ -1,45 +1,48 @@
 <script setup lang="ts">
-import AppHeader from '../components/AppHeader.vue';
-import AppSidebar from '../components/AppSidebar.vue';
+import { onMounted } from 'vue';
+import AppNavTabs from '../components/AppNavTabs.vue';
+import AppToolbar from '../components/AppToolbar.vue';
+import { useDebuggerStore } from '../stores/debugger';
+const store = useDebuggerStore();
+onMounted(() => {
+  void store.bootstrap();
+});
 </script>
 <template>
   <main class="app">
-    <AppSidebar />
-    <section class="shell">
-      <AppHeader />
-      <div class="content"><RouterView /></div>
-      <footer>
-        WRS Debugger v0.1.0
-        <span>Mock environment · Backend not connected</span>
-      </footer>
-    </section>
+    <AppToolbar />
+    <div class="operation">
+      <AppNavTabs />
+      <section class="workspace"><RouterView /></section>
+    </div>
   </main>
 </template>
 <style scoped>
 .app {
   display: flex;
-  min-height: 100vh;
-}
-.shell {
-  display: flex;
-  flex: 1;
-  min-width: 0;
+  height: 100dvh;
+  min-height: 0;
   flex-direction: column;
+  background: var(--outer);
 }
-.content {
+.operation {
+  display: flex;
+  min-height: 0;
   flex: 1;
-  padding: 28px;
-  overflow: auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
 }
-footer {
-  height: 34px;
-  padding: 9px 28px;
-  color: var(--app-muted);
-  font-size: 12px;
-  background: #fff;
-  border-top: 1px solid var(--app-border);
+.workspace {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 14px;
+  background: var(--inner);
+  border-radius: 5px;
 }
-footer span {
-  margin-left: 18px;
+.workspace :deep(.view) {
+  height: 100%;
+  min-height: 100%;
 }
 </style>

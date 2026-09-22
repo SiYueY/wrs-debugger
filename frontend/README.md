@@ -23,16 +23,31 @@ pnpm install
 | `pnpm format`        | 使用 Prettier 格式化前端源码与配置。                         |
 | `pnpm format:check`  | 检查前端文件是否符合 Prettier 格式。                         |
 | `pnpm build:web`     | 构建 Web 生产产物至 `web/dist`。                             |
-| `pnpm build:desktop` | 先构建 Web，再构建 Electron Main/Preload。                   |
+| `pnpm build:desktop` | 构建 Web 与 Electron Main/Preload。                          |
 | `pnpm clean`         | 清理各 workspace 的构建产物。                                |
 
-构建 Linux 安装包时，先执行 `pnpm build:desktop`，再运行：
+开发桌面壳时，仍需在独立终端启动本地后端：
 
 ```bash
-pnpm --filter @wrs-debugger/desktop package
+cd ../backend
+uv run uvicorn wrs_debugger.main:app --host 127.0.0.1 --port 8000
 ```
 
-Electron Builder 会将 `web/dist` 作为资源随应用打包。
+构建自包含 Linux AppImage 请从项目根目录执行独立发布脚本：
+
+```bash
+./scripts/package-desktop-appimage.sh
+```
+
+该脚本会构建 Web、将 Python 3.12 后端冻结为 PyInstaller `onedir` 产物、构建 Electron，
+然后生成 AppImage。最终可交付产物位于项目根目录的 `dist/`：
+
+```text
+dist/WRS-Debugger-<version>-<YYYYMMDD>.AppImage
+```
+
+`frontend/desktop/release/` 仅保留 Electron Builder 的同名构建副本，不作为发布路径。
+目标机无需安装 Python、uv 或 WRS 后端依赖。
 
 ## Structure
 
@@ -40,7 +55,7 @@ Electron Builder 会将 `web/dist` 作为资源随应用打包。
 frontend/
 ├── web/                 # Vue 3 + Vite 的唯一业务 UI
 │   └── src/
-│       ├── api/         # 业务语义的 mock adapter；未来替换为 REST/WebSocket
+│       ├── api/         # `/api/v1` HTTP client 与 WRS 资源接口
 │       ├── components/  # 布局与可复用表单
 │       ├── layouts/     # 应用壳
 │       ├── models/      # 强类型 UI 数据模型与校验
@@ -49,17 +64,15 @@ frontend/
 └── desktop/             # Electron Main 与 Preload；不包含 renderer
 ```
 
-## Current scope
+## Runtime API configuration
 
-当前前端是可运行的 UI 骨架，包含连接管理、无线配置、LoRa/GFSK 动态表单、配置同步和出厂绑定的 mock 流程。
-
-- 所有设备操作目前仅更新内存中的 mock state。
-- 前端不访问 ROS 2、USB Serial 或浏览器 Web Serial API。
-- `web/src/api/` 是未来替换为 `/api/v1/...` REST 与 WebSocket adapter 的唯一接入 seam；页面不应直接调用 `fetch` 或接触底层协议。
-- `desktop/` 不处理业务状态，也不向 preload 暴露设备操作；保持 `nodeIntegration: false`、`contextIsolation: true` 与 `sandbox: true`。
+- 前端只通过 `web/src/api/` 调用 `/api/v1`；页面不直接访问设备协议或 API `fetch`。
+- 浏览器开发模式从 `web/.env.development` 读取 `VITE_WRS_API_BASE`，默认连接 `http://127.0.0.1:8000`。
+- Electron 开发与打包模式均由安全 preload 提供 loopback API 地址；打包模式的后端端口随机分配。
+- `desktop/` 不处理业务状态，也不向 renderer 暴露 Node 或设备操作；保持 `nodeIntegration: false`、`contextIsolation: true` 与 `sandbox: true`。
 
 ## UI notes
 
 - 路由使用 Hash History，生产产物可以由 Electron 的本地文件加载。
 - 页面路由使用 lazy import；Vue、Element Plus 与业务页面在生产构建中分块输出。
-- `RadioConfigForm` 维护本地配置草稿，并通过强类型 `v-model` 事件向页面回传副本，避免修改传入 props。
+- LoRa 与 GFSK 维护独立字段模型和表单，避免错误复用不同调制方式的协议参数。

@@ -10,7 +10,7 @@
     "dev:electron": "wait-on http://127.0.0.1:5173 dist/main/index.cjs && electron .",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "package": "pnpm build && electron-builder",
+    "package": "electron-builder",
     "clean": "rm -rf dist release"
   },
   "devDependencies": {
@@ -25,6 +25,7 @@
   "build": {
     "appId": "com.wrs.debugger",
     "productName": "WRS Debugger",
+    "executableName": "wrs-debugger",
     "directories": {
       "output": "release"
     },
@@ -41,6 +42,10 @@
       {
         "from": "../web/dist",
         "to": "web"
+      },
+      {
+        "from": "../../backend/dist/wrs-debugger-backend",
+        "to": "backend"
       }
     ]
   }

@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Mapping
+from typing import Any
 from uuid import uuid4
 
 from fastapi import Request
@@ -11,7 +12,7 @@ from wrs_debugger.models.error import ProblemDetails, ValidationViolation
 
 logger = logging.getLogger(__name__)
 
-PROBLEM_RESPONSES: dict[int, dict[str, object]] = {
+PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ProblemDetails}
     for status in (400, 404, 409, 422, 500, 502, 503, 504)
 }

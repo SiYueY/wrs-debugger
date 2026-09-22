@@ -10,6 +10,7 @@ from wrs_debugger.models.connection import (
     TransmitterConnection,
 )
 from wrs_debugger.models.device import ReceiverInfo, SerialPortInfo, TransmitterInfo
+from wrs_debugger.models.diagnostic import DiagnosticError
 from wrs_debugger.models.gfsk import GfskParameters
 from wrs_debugger.models.lora import LoRaParameters
 
@@ -66,6 +67,7 @@ class MockWrsGateway:
         )
     )
     transmitter_pin: str = "123456"
+    diagnostic_error: DiagnosticError = field(default_factory=DiagnosticError)
     transmitter_lora_parameters: LoRaParameters = field(default_factory=default_lora_parameters)
     transmitter_gfsk_parameters: GfskParameters = field(default_factory=default_gfsk_parameters)
     receiver_lora_parameters: LoRaParameters = field(default_factory=default_lora_parameters)
@@ -88,6 +90,12 @@ class MockWrsGateway:
 
     def list_serial_ports(self) -> list[SerialPortInfo]:
         return [port.model_copy(deep=True) for port in self.available_serial_ports]
+
+    def read_diagnostic_error(self) -> DiagnosticError:
+        return self.diagnostic_error.model_copy(deep=True)
+
+    def clear_diagnostic_error(self) -> None:
+        self.diagnostic_error = DiagnosticError()
 
     def connect_transmitter(self, device: str) -> None:
         if not any(port.device == device for port in self.available_serial_ports):

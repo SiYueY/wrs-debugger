@@ -1,6 +1,7 @@
 from typing import Protocol
 
 from wrs_debugger.models.device import ReceiverInfo, SerialPortInfo, TransmitterInfo
+from wrs_debugger.models.diagnostic import DiagnosticError
 from wrs_debugger.models.gfsk import GfskParameters
 from wrs_debugger.models.lora import LoRaParameters
 
@@ -13,6 +14,8 @@ class BindingHandle:
 
 
 class WrsGateway(Protocol):
+    def read_diagnostic_error(self) -> DiagnosticError: ...
+    def clear_diagnostic_error(self) -> None: ...
     def list_serial_ports(self) -> list[SerialPortInfo]: ...
     def connect_transmitter(self, device: str) -> None: ...
     def disconnect_transmitter(self) -> None: ...

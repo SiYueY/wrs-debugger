@@ -12,6 +12,7 @@ from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.mock import MockWrsGateway
 from wrs_debugger.main import create_app
 from wrs_debugger.models.device import SerialPortInfo
+from wrs_debugger.models.diagnostic import DiagnosticError
 from wrs_debugger.models.event import EventName
 from wrs_debugger.models.gfsk import GfskParameters
 from wrs_debugger.models.lora import LoRaParameters
@@ -80,6 +81,16 @@ async def test_system_contract_and_openapi_problem_details(tmp_path: Path) -> No
     async with api_client(tmp_path) as (client, _):
         health = (await client.get("/api/v1/health")).json()
         assert health == {"status": "ok", "ready": True, "phase": "ready_for_control"}
+        electron_health = await client.get("/api/v1/health", headers={"Origin": "null"})
+        assert electron_health.headers["access-control-allow-origin"] == "null"
+        vite_health = await client.get(
+            "/api/v1/health", headers={"Origin": "http://127.0.0.1:5173"}
+        )
+        assert vite_health.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+        rejected_origin = await client.get(
+            "/api/v1/health", headers={"Origin": "http://localhost:5173"}
+        )
+        assert "access-control-allow-origin" not in rejected_origin.headers
         info = (await client.get("/api/v1/system/info")).json()
         assert info["backend_version"] == "0.1.0"
         assert info["api_version"] == "v1"
@@ -95,10 +106,49 @@ async def test_system_contract_and_openapi_problem_details(tmp_path: Path) -> No
         assert "/api/v1/transmitter/gfsk-parameters" in paths
         assert "/api/v1/receiver/lora-parameters" in paths
         assert "/api/v1/receiver/gfsk-parameters" in paths
+        assert "/api/v1/diagnostics/error" in paths
         response_422 = paths["/api/v1/transmitter/connect"]["post"]["responses"]["422"]
         schema_ref = response_422["content"]["application/json"]["schema"]["$ref"]
         assert schema_ref.endswith("/ProblemDetails")
         assert "HTTPValidationError" not in schema["components"]["schemas"]
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_error_read_and_clear(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
+        assert (await client.get("/api/v1/diagnostics/error")).json() == {
+            "code": None,
+            "detail": None,
+        }
+        gateway = cast(MockWrsGateway, app.state.gateway)
+        gateway.diagnostic_error = DiagnosticError(code="E_STOP", detail="Emergency stop active")
+        assert (await client.get("/api/v1/diagnostics/error")).json() == {
+            "code": "E_STOP",
+            "detail": "Emergency stop active",
+        }
+        assert (await client.post("/api/v1/diagnostics/error/clear")).status_code == 204
+        assert (await client.get("/api/v1/diagnostics/error")).json()["code"] is None
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_gateway_failure_uses_problem_details(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
+        gateway = cast(MockWrsGateway, app.state.gateway)
+
+        def fail_read() -> DiagnosticError:
+            raise ApplicationError(
+                "DIAGNOSTIC_UNAVAILABLE",
+                503,
+                "Diagnostics unavailable",
+                "The device did not return diagnostic status.",
+            )
+
+        gateway.read_diagnostic_error = fail_read  # type: ignore[method-assign]
+        problem(
+            await client.get("/api/v1/diagnostics/error"),
+            "DIAGNOSTIC_UNAVAILABLE",
+            503,
+        )
 
 
 @pytest.mark.asyncio
