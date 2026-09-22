@@ -3,11 +3,11 @@ from collections.abc import Awaitable, Callable
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.models.connection import ConnectionState
 from wrs_debugger.models.event import EventName
-from wrs_debugger.models.operation import Operation, OperationType
+from wrs_debugger.models.operation import Operation, OperationStage, OperationType
 from wrs_debugger.operations.manager import OperationManager
 from wrs_debugger.services.runtime import Runtime
 
-ProgressUpdate = Callable[[str, float], Awaitable[None]]
+ProgressUpdate = Callable[[OperationStage, float], Awaitable[None]]
 
 
 class SynchronizationService:
@@ -19,19 +19,18 @@ class SynchronizationService:
         self._require_connections()
 
         async def work(update: ProgressUpdate) -> None:
+            self._require_connections()
             async with self.runtime.transmitter_lock:
-                parameters = await self.runtime.call(
+                parameters = await self.runtime.call_transmitter(
                     self.runtime.gateway.read_transmitter_lora_parameters
                 )
-                await update("reading_transmitter_lora", 0.35)
+                await update(OperationStage.reading_transmitter_lora, 0.35)
                 async with self.runtime.receiver_lock:
-                    await self.runtime.call(
+                    await self.runtime.call_receiver(
                         lambda: self.runtime.gateway.write_receiver_lora_parameters(parameters)
                     )
-                await update("writing_receiver_lora", 0.8)
-            await self.runtime.publish(
-                EventName.receiver_lora_parameters_changed, parameters.model_dump(mode="json")
-            )
+                await update(OperationStage.writing_receiver_lora, 0.8)
+            await self.runtime.publish(EventName.receiver_lora_parameters_changed, {})
 
         return await self.operations.start(OperationType.sync_lora_parameters, work)
 
@@ -39,19 +38,18 @@ class SynchronizationService:
         self._require_connections()
 
         async def work(update: ProgressUpdate) -> None:
+            self._require_connections()
             async with self.runtime.transmitter_lock:
-                parameters = await self.runtime.call(
+                parameters = await self.runtime.call_transmitter(
                     self.runtime.gateway.read_transmitter_gfsk_parameters
                 )
-                await update("reading_transmitter_gfsk", 0.35)
+                await update(OperationStage.reading_transmitter_gfsk, 0.35)
                 async with self.runtime.receiver_lock:
-                    await self.runtime.call(
+                    await self.runtime.call_receiver(
                         lambda: self.runtime.gateway.write_receiver_gfsk_parameters(parameters)
                     )
-                await update("writing_receiver_gfsk", 0.8)
-            await self.runtime.publish(
-                EventName.receiver_gfsk_parameters_changed, parameters.model_dump(mode="json")
-            )
+                await update(OperationStage.writing_receiver_gfsk, 0.8)
+            await self.runtime.publish(EventName.receiver_gfsk_parameters_changed, {})
 
         return await self.operations.start(OperationType.sync_gfsk_parameters, work)
 

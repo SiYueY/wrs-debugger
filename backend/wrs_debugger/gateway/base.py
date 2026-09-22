@@ -1,7 +1,8 @@
 from typing import Protocol
 
 from wrs_debugger.models.device import ReceiverInfo, SerialPortInfo, TransmitterInfo
-from wrs_debugger.models.radio import GfskParameters, LoRaParameters
+from wrs_debugger.models.gfsk import GfskParameters
+from wrs_debugger.models.lora import LoRaParameters
 
 
 class BindingHandle:

@@ -11,14 +11,14 @@ class NativeExecutor(Protocol):
 
 
 class InlineMockExecutor:
-    """Runs the non-blocking MockWrsGateway without creating worker threads."""
+    """Run the non-blocking MockWrsGateway without creating worker threads."""
 
     async def run(self, function: Callable[[], T]) -> T:
         return function()
 
 
 class ThreadedNativeExecutor:
-    """Single execution seam used when a synchronous pybind gateway is introduced."""
+    """Execute synchronous native calls outside the FastAPI event loop."""
 
     async def run(self, function: Callable[[], T]) -> T:
         return await to_thread.run_sync(function)

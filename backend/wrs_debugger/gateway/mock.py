@@ -10,13 +10,44 @@ from wrs_debugger.models.connection import (
     TransmitterConnection,
 )
 from wrs_debugger.models.device import ReceiverInfo, SerialPortInfo, TransmitterInfo
-from wrs_debugger.models.operation import Operation
-from wrs_debugger.models.radio import (
-    DEFAULT_GFSK_PARAMETERS,
-    DEFAULT_LORA_PARAMETERS,
-    GfskParameters,
-    LoRaParameters,
-)
+from wrs_debugger.models.gfsk import GfskParameters
+from wrs_debugger.models.lora import LoRaParameters
+
+
+def default_lora_parameters() -> LoRaParameters:
+    return LoRaParameters(
+        param_flags=0,
+        tx_power=10,
+        freq_offset=250,
+        payload_len=12,
+        rssi_threshold=110,
+        heartbeat_interval=200,
+        heartbeat_loss=3,
+        bandwidth=1,
+        spreading_factor=6,
+        coding_rate=4,
+        header_type=0,
+        preamble_len=12,
+        sync_word=5156,
+    )
+
+
+def default_gfsk_parameters() -> GfskParameters:
+    return GfskParameters(
+        param_flags=16384,
+        tx_power=10,
+        freq_offset=250,
+        payload_len=12,
+        rssi_threshold=110,
+        heartbeat_interval=200,
+        heartbeat_loss=3,
+        bandwidth=1,
+        bitrate=50000,
+        freq_deviation=25000,
+        pulse_shaping=9,
+        preamble_len=16,
+        sync_word=5156,
+    )
 
 
 @dataclass
@@ -35,18 +66,10 @@ class MockWrsGateway:
         )
     )
     transmitter_pin: str = "123456"
-    transmitter_lora_parameters: LoRaParameters = field(
-        default_factory=lambda: DEFAULT_LORA_PARAMETERS.model_copy(deep=True)
-    )
-    transmitter_gfsk_parameters: GfskParameters = field(
-        default_factory=lambda: DEFAULT_GFSK_PARAMETERS.model_copy(deep=True)
-    )
-    receiver_lora_parameters: LoRaParameters = field(
-        default_factory=lambda: DEFAULT_LORA_PARAMETERS.model_copy(deep=True)
-    )
-    receiver_gfsk_parameters: GfskParameters = field(
-        default_factory=lambda: DEFAULT_GFSK_PARAMETERS.model_copy(deep=True)
-    )
+    transmitter_lora_parameters: LoRaParameters = field(default_factory=default_lora_parameters)
+    transmitter_gfsk_parameters: GfskParameters = field(default_factory=default_gfsk_parameters)
+    receiver_lora_parameters: LoRaParameters = field(default_factory=default_lora_parameters)
+    receiver_gfsk_parameters: GfskParameters = field(default_factory=default_gfsk_parameters)
     receiver_bound_device_id: str | None = None
     transmitter_connection: TransmitterConnection = field(
         default_factory=lambda: TransmitterConnection(state=ConnectionState.disconnected)
@@ -57,7 +80,6 @@ class MockWrsGateway:
     receiver_settings: ReceiverSettings = field(
         default_factory=lambda: ReceiverSettings(domain_id=0)
     )
-    active_operation: Operation | None = None
     binding_handle: BindingHandle | None = None
     fail_transmitter_connect: bool = False
     fail_receiver_connect: bool = False
@@ -103,7 +125,7 @@ class MockWrsGateway:
         self.transmitter_lora_parameters = parameters.model_copy(deep=True)
 
     def restore_transmitter_lora_defaults(self) -> None:
-        self.transmitter_lora_parameters = DEFAULT_LORA_PARAMETERS.model_copy(deep=True)
+        self.transmitter_lora_parameters = default_lora_parameters()
 
     def read_transmitter_gfsk_parameters(self) -> GfskParameters:
         return self.transmitter_gfsk_parameters.model_copy(deep=True)
@@ -112,7 +134,7 @@ class MockWrsGateway:
         self.transmitter_gfsk_parameters = parameters.model_copy(deep=True)
 
     def restore_transmitter_gfsk_defaults(self) -> None:
-        self.transmitter_gfsk_parameters = DEFAULT_GFSK_PARAMETERS.model_copy(deep=True)
+        self.transmitter_gfsk_parameters = default_gfsk_parameters()
 
     def connect_receiver(self, domain_id: int) -> None:
         if self.fail_receiver_connect:
@@ -128,10 +150,7 @@ class MockWrsGateway:
         return
 
     def read_receiver_info(self) -> ReceiverInfo:
-        return ReceiverInfo(
-            bound_device_id=self.receiver_bound_device_id,
-            connection_state=ConnectionState.connected,
-        )
+        return ReceiverInfo(bound_device_id=self.receiver_bound_device_id)
 
     def read_receiver_lora_parameters(self) -> LoRaParameters:
         return self.receiver_lora_parameters.model_copy(deep=True)
@@ -140,7 +159,7 @@ class MockWrsGateway:
         self.receiver_lora_parameters = parameters.model_copy(deep=True)
 
     def restore_receiver_lora_defaults(self) -> None:
-        self.receiver_lora_parameters = DEFAULT_LORA_PARAMETERS.model_copy(deep=True)
+        self.receiver_lora_parameters = default_lora_parameters()
 
     def read_receiver_gfsk_parameters(self) -> GfskParameters:
         return self.receiver_gfsk_parameters.model_copy(deep=True)
@@ -149,7 +168,7 @@ class MockWrsGateway:
         self.receiver_gfsk_parameters = parameters.model_copy(deep=True)
 
     def restore_receiver_gfsk_defaults(self) -> None:
-        self.receiver_gfsk_parameters = DEFAULT_GFSK_PARAMETERS.model_copy(deep=True)
+        self.receiver_gfsk_parameters = default_gfsk_parameters()
 
     def prepare_transmitter_binding(self) -> BindingHandle:
         if self.fail_factory_bind:
@@ -188,6 +207,3 @@ class MockWrsGateway:
 
     def record_receiver_settings(self, settings: ReceiverSettings) -> None:
         self.receiver_settings = settings.model_copy(deep=True)
-
-    def record_active_operation(self, operation: Operation | None) -> None:
-        self.active_operation = operation.model_copy(deep=True) if operation is not None else None

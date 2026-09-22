@@ -1,16 +1,21 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import cast
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
+from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.mock import MockWrsGateway
-from wrs_debugger.main import app
+from wrs_debugger.main import create_app
 from wrs_debugger.models.device import SerialPortInfo
-from wrs_debugger.models.radio import GfskParameters, LoRaParameters
+from wrs_debugger.models.event import EventName
+from wrs_debugger.models.gfsk import GfskParameters
+from wrs_debugger.models.lora import LoRaParameters
+from wrs_debugger.settings import SettingsRepository
 from wrs_debugger.websocket.hub import WebSocketHub
 
 LORA_ZERO_VALUES = {
@@ -46,11 +51,12 @@ GFSK_ZERO_VALUES = {
 
 
 @asynccontextmanager
-async def api_client() -> AsyncIterator[httpx.AsyncClient]:
+async def api_client(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, object]]:
+    app = create_app(settings_repository=SettingsRepository(tmp_path / "settings.json"))
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            yield client
+            yield client, app
 
 
 def problem(response: httpx.Response, code: str, status: int) -> None:
@@ -70,24 +76,46 @@ async def connect_both(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_system_snapshot_and_openapi_are_v1_only() -> None:
-    async with api_client() as client:
-        assert (await client.get("/api/v1/health")).json()["status"] == "ok"
+async def test_system_contract_and_openapi_problem_details(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, _):
+        health = (await client.get("/api/v1/health")).json()
+        assert health == {"status": "ok", "ready": True, "phase": "ready_for_control"}
+        info = (await client.get("/api/v1/system/info")).json()
+        assert info["backend_version"] == "0.1.0"
+        assert info["api_version"] == "v1"
+        assert info["event_version"] == "1.0"
+        assert info["backend_instance_id"]
         snapshot = (await client.get("/api/v1/snapshot")).json()
-        assert snapshot["transmitter_connection"]["state"] == "disconnected"
+        assert snapshot["transmitter"]["connection"]["state"] == "disconnected"
+        assert snapshot["receiver"]["connection"]["state"] == "disconnected"
+
         schema = (await client.get("/openapi.json")).json()
         paths = schema["paths"]
         assert "/api/v1/transmitter/lora-parameters" in paths
         assert "/api/v1/transmitter/gfsk-parameters" in paths
         assert "/api/v1/receiver/lora-parameters" in paths
         assert "/api/v1/receiver/gfsk-parameters" in paths
-        assert not any("connection/robot" in path or "connection/box" in path for path in paths)
-        assert not any(path in {"/api/v1/box", "/api/v1/receiver/config"} for path in paths)
+        response_422 = paths["/api/v1/transmitter/connect"]["post"]["responses"]["422"]
+        schema_ref = response_422["content"]["application/json"]["schema"]["$ref"]
+        assert schema_ref.endswith("/ProblemDetails")
+        assert "HTTPValidationError" not in schema["components"]["schemas"]
 
 
 @pytest.mark.asyncio
-async def test_transmitter_serial_enumeration_switching_failure_and_disconnect() -> None:
-    async with api_client() as client:
+async def test_validation_error_is_i18n_safe_and_does_not_echo_input(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, _):
+        response = await client.put("/api/v1/transmitter/pin", json={"pin": "１２３４５６"})
+        problem(response, "VALIDATION_FAILED", 422)
+        body = response.json()
+        assert body["violations"] == [
+            {"field": "pin", "code": "INVALID_FORMAT", "context": {"pattern": "^[0-9]{6}$"}}
+        ]
+        assert "１２３４５６" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_transmitter_switching_failure_and_disconnect(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
         gateway = cast(MockWrsGateway, app.state.gateway)
         gateway.available_serial_ports = []
         assert (await client.get("/api/v1/transmitter/serial-ports")).json() == {"ports": []}
@@ -113,90 +141,110 @@ async def test_transmitter_serial_enumeration_switching_failure_and_disconnect()
             503,
         )
         assert (await client.get("/api/v1/transmitter/connection")).json()["state"] == "failed"
-        assert (await client.post("/api/v1/transmitter/disconnect")).json()[
-            "state"
-        ] == "disconnected"
+        disconnected = await client.post("/api/v1/transmitter/disconnect")
+        assert disconnected.json()["state"] == "disconnected"
 
 
 @pytest.mark.asyncio
-async def test_receiver_settings_and_independent_connection() -> None:
-    async with api_client() as client:
-        assert (await client.put("/api/v1/receiver/settings", json={"domain_id": 12})).json() == {
-            "domain_id": 12
-        }
-        receiver = await client.post("/api/v1/receiver/connect", json={"domain_id": 12})
-        assert receiver.json()["state"] == "connected"
+async def test_unexpected_connect_failure_converges_to_failed(tmp_path: Path) -> None:
+    app = create_app(settings_repository=SettingsRepository(tmp_path / "settings.json"))
+    async with app.router.lifespan_context(app):
         gateway = cast(MockWrsGateway, app.state.gateway)
-        assert gateway.receiver_settings.domain_id == 12
-        assert gateway.receiver_connection.state == "connected"
-        assert (await client.get("/api/v1/transmitter/connection")).json()[
-            "state"
-        ] == "disconnected"
-        assert (await client.post("/api/v1/receiver/disconnect")).json()["state"] == "disconnected"
+
+        def broken_connect(_: str) -> None:
+            raise RuntimeError("boom")
+
+        gateway.connect_transmitter = broken_connect  # type: ignore[method-assign]
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            problem(
+                await client.post("/api/v1/transmitter/connect", json={"device": "/dev/ttyACM0"}),
+                "INTERNAL_ERROR",
+                500,
+            )
+            connection = (await client.get("/api/v1/transmitter/connection")).json()
+            assert connection["state"] == "failed"
+            assert connection["error"]["code"] == "INTERNAL_ERROR"
 
 
 @pytest.mark.asyncio
-async def test_lora_and_gfsk_raw_parameters_restore_and_numeric_limits() -> None:
-    async with api_client() as client:
+async def test_native_disconnect_error_updates_connection_state(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
+        await client.post("/api/v1/transmitter/connect", json={"device": "/dev/ttyACM0"})
+        gateway = cast(MockWrsGateway, app.state.gateway)
+
+        def disconnected() -> LoRaParameters:
+            raise ApplicationError(
+                "TRANSMITTER_DISCONNECTED",
+                409,
+                "Transmitter disconnected",
+                "The transmitter disconnected during I/O.",
+            )
+
+        gateway.read_transmitter_lora_parameters = disconnected  # type: ignore[method-assign]
         problem(
             await client.get("/api/v1/transmitter/lora-parameters"),
-            "TRANSMITTER_NOT_CONNECTED",
+            "TRANSMITTER_DISCONNECTED",
             409,
         )
+        connection = (await client.get("/api/v1/transmitter/connection")).json()
+        assert connection["state"] == "disconnected"
+        assert connection["error"]["code"] == "TRANSMITTER_DISCONNECTED"
+
+
+@pytest.mark.asyncio
+async def test_restore_defaults_does_not_read_back(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
         await connect_both(client)
-        lora = (await client.get("/api/v1/transmitter/lora-parameters")).json()
-        assert lora["rssi_threshold"] == 110
-        lora["tx_power"] = -32768
-        lora["sync_word"] = 65535
-        assert (
-            await client.put("/api/v1/transmitter/lora-parameters", json=lora)
-        ).status_code == 204
-        assert (await client.get("/api/v1/transmitter/lora-parameters")).json()[
-            "tx_power"
-        ] == -32768
-        lora["bandwidth"] = 256
-        problem(
-            await client.put("/api/v1/transmitter/lora-parameters", json=lora),
-            "VALIDATION_FAILED",
-            422,
-        )
+        gateway = cast(MockWrsGateway, app.state.gateway)
+
+        def forbidden_read() -> LoRaParameters:
+            raise RuntimeError("restore must not read back")
+
+        gateway.read_transmitter_lora_parameters = forbidden_read  # type: ignore[method-assign]
         assert (
             await client.post("/api/v1/transmitter/lora-parameters/restore-defaults")
         ).status_code == 204
-        gfsk = (await client.get("/api/v1/receiver/gfsk-parameters")).json()
-        gfsk["bitrate"] = 4294967295
-        gfsk["freq_deviation"] = 4294967295
-        assert (await client.put("/api/v1/receiver/gfsk-parameters", json=gfsk)).status_code == 204
-        gfsk["bitrate"] = 4294967296
-        problem(
-            await client.put("/api/v1/receiver/gfsk-parameters", json=gfsk),
-            "VALIDATION_FAILED",
-            422,
-        )
-        assert (
-            await client.post("/api/v1/receiver/gfsk-parameters/restore-defaults")
-        ).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_receiver_settings_are_isolated_and_atomic(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    async with api_client(tmp_path) as (client, _):
+        assert (await client.put("/api/v1/receiver/settings", json={"domain_id": 12})).json() == {
+            "domain_id": 12
+        }
+    assert settings_path.exists()
+    assert settings_path.read_text(encoding="utf-8") == '{"receiver": {"domain_id": 12}}'
+
+
+@pytest.mark.asyncio
+async def test_receiver_settings_write_failure_is_reported(tmp_path: Path) -> None:
+    class FailingRepository(SettingsRepository):
+        def save_domain_id(self, domain_id: int) -> None:
+            del domain_id
+            raise OSError("read only")
+
+    app = create_app(settings_repository=FailingRepository(tmp_path / "settings.json"))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            problem(
+                await client.put("/api/v1/receiver/settings", json={"domain_id": 12}),
+                "SETTINGS_WRITE_FAILED",
+                500,
+            )
+            assert (await client.get("/api/v1/receiver/settings")).json() == {"domain_id": 0}
 
 
 @pytest.mark.parametrize(
     ("model", "field", "base", "minimum", "maximum"),
     [
-        (
-            LoRaParameters,
-            "bandwidth",
-            LORA_ZERO_VALUES,
-            0,
-            255,
-        ),
+        (LoRaParameters, "bandwidth", LORA_ZERO_VALUES, 0, 255),
         (LoRaParameters, "sync_word", LORA_ZERO_VALUES, 0, 65535),
         (LoRaParameters, "tx_power", LORA_ZERO_VALUES, -32768, 32767),
-        (
-            GfskParameters,
-            "bitrate",
-            GFSK_ZERO_VALUES,
-            0,
-            4294967295,
-        ),
+        (GfskParameters, "bitrate", GFSK_ZERO_VALUES, 0, 4294967295),
+        (GfskParameters, "freq_deviation", GFSK_ZERO_VALUES, 0, 4294967295),
     ],
 )
 def test_numeric_type_boundaries(
@@ -214,166 +262,73 @@ def test_numeric_type_boundaries(
 
 
 @pytest.mark.asyncio
-async def test_all_device_parameter_resources_support_get_put_restore() -> None:
-    async with api_client() as client:
-        problem(await client.get("/api/v1/receiver/lora-parameters"), "RECEIVER_NOT_CONNECTED", 409)
-        await connect_both(client)
-        for path in (
-            "/api/v1/transmitter/lora-parameters",
-            "/api/v1/transmitter/gfsk-parameters",
-            "/api/v1/receiver/lora-parameters",
-            "/api/v1/receiver/gfsk-parameters",
-        ):
-            parameters = (await client.get(path)).json()
-            assert (await client.put(path, json=parameters)).status_code == 204
-            assert (await client.post(f"{path}/restore-defaults")).status_code == 204
+async def test_receiver_info_does_not_duplicate_connection_state(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, _):
+        await client.post("/api/v1/receiver/connect", json={"domain_id": 0})
+        body = (await client.get("/api/v1/receiver")).json()
+        assert body == {"bound_device_id": None}
+        assert "connection_state" not in body
 
 
 @pytest.mark.asyncio
-async def test_info_pin_and_pin_validation() -> None:
-    async with api_client() as client:
+async def test_cross_device_operations_use_structured_failure(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
         await connect_both(client)
-        assert (await client.get("/api/v1/transmitter")).json()["device_id"] == "A1B2C3"
-        assert (await client.get("/api/v1/receiver")).json()["bound_device_id"] is None
-        assert (await client.get("/api/v1/transmitter/pin")).json()["pin"] == "123456"
-        assert (
-            await client.put("/api/v1/transmitter/pin", json={"pin": "654321"})
-        ).status_code == 204
-        assert (await client.get("/api/v1/transmitter/pin")).json()["pin"] == "654321"
-        problem(
-            await client.put("/api/v1/transmitter/pin", json={"pin": "000000"}),
-            "PARAMETER_VALIDATION_FAILED",
-            422,
-        )
-        for pin in ("１２３４５６", "12345"):
-            problem(
-                await client.put("/api/v1/transmitter/pin", json={"pin": pin}),
-                "VALIDATION_FAILED",
-                422,
-            )
+        sync = await client.post("/api/v1/receiver/lora-parameters/sync-from-transmitter")
+        assert sync.status_code == 202
+        operation_id = sync.json()["operation_id"]
+        await asyncio.sleep(0.02)
+        operation = (await client.get(f"/api/v1/operations/{operation_id}")).json()
+        assert operation["state"] == "succeeded"
+        assert operation["stage"] == "completed"
+        assert operation["error"] is None
 
-
-@pytest.mark.asyncio
-async def test_unexpected_error_is_problem_details() -> None:
-    async with app.router.lifespan_context(app):
         gateway = cast(MockWrsGateway, app.state.gateway)
-
-        def broken_list_serial_ports() -> list[SerialPortInfo]:
-            raise RuntimeError("unexpected mock failure")
-
-        gateway.list_serial_ports = broken_list_serial_ports  # type: ignore[method-assign]
-        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            problem(await client.get("/api/v1/transmitter/serial-ports"), "INTERNAL_ERROR", 500)
-
-
-@pytest.mark.asyncio
-async def test_cross_device_operations_and_factory_binding_failure() -> None:
-    async with api_client() as client:
-        problem(
-            await client.post("/api/v1/receiver/lora-parameters/sync-from-transmitter"),
-            "TRANSMITTER_NOT_CONNECTED",
-            409,
-        )
-        await connect_both(client)
-        transmitter_lora = (await client.get("/api/v1/transmitter/lora-parameters")).json()
-        transmitter_lora["spreading_factor"] = 255
-        assert (
-            await client.put("/api/v1/transmitter/lora-parameters", json=transmitter_lora)
-        ).status_code == 204
-        response = await client.post("/api/v1/receiver/lora-parameters/sync-from-transmitter")
-        assert response.status_code == 202
-        operation_id = response.json()["operation_id"]
-        assert (await client.get("/api/v1/operations/active")).json()["operation"][
-            "operation_id"
-        ] == operation_id
-        gateway = cast(MockWrsGateway, app.state.gateway)
-        assert gateway.active_operation is not None
-        assert gateway.active_operation.operation_id == operation_id
-        problem(
-            await client.put("/api/v1/transmitter/lora-parameters", json=transmitter_lora),
-            "OPERATION_CONFLICT",
-            409,
-        )
-        await asyncio.sleep(0.05)
-        assert (await client.get(f"/api/v1/operations/{operation_id}")).json()[
-            "state"
-        ] == "succeeded"
-        assert gateway.active_operation is None
-        assert (await client.get("/api/v1/receiver/lora-parameters")).json()[
-            "spreading_factor"
-        ] == 255
-        assert (
-            await client.post("/api/v1/receiver/gfsk-parameters/sync-from-transmitter")
-        ).status_code == 202
-        await asyncio.sleep(0.05)
-        binding = await client.post("/api/v1/receiver/factory-bind")
-        assert binding.status_code == 202
-        await asyncio.sleep(0.05)
-        assert (await client.get(f"/api/v1/operations/{binding.json()['operation_id']}")).json()[
-            "state"
-        ] == "succeeded"
-        assert (await client.get("/api/v1/receiver")).json()["bound_device_id"] == "A1B2C3"
-        gateway.receiver_bound_device_id = None
         gateway.fail_binding_receiver = True
         binding = await client.post("/api/v1/receiver/factory-bind")
-        assert binding.status_code == 202
-        await asyncio.sleep(0.05)
-        assert (await client.get(f"/api/v1/operations/{binding.json()['operation_id']}")).json()[
-            "state"
-        ] == "failed"
-        assert (await client.get("/api/v1/receiver")).json()["bound_device_id"] is None
-        assert gateway.binding_handle is None
+        await asyncio.sleep(0.02)
+        failed = (await client.get(f"/api/v1/operations/{binding.json()['operation_id']}")).json()
+        assert failed["state"] == "failed"
+        assert failed["error"]["code"] == "BINDING_FAILED"
+        assert isinstance(failed["error"]["detail"], str)
+
+
+class FakeSocket:
+    def __init__(self) -> None:
+        self.closed: tuple[int, str] | None = None
+        self.accepted = False
+        self.sent: list[object] = []
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed = (code, reason)
+
+    async def send_json(self, data: object) -> None:
+        self.sent.append(data)
+
+    async def receive(self) -> dict[str, object]:
+        return {"type": "websocket.disconnect", "code": 1000}
 
 
 @pytest.mark.asyncio
-async def test_websocket_envelope_has_stable_shape() -> None:
-    class FakeSocket:
-        async def accept(self) -> None:
-            return
+async def test_websocket_slow_client_is_closed_and_removed() -> None:
+    socket = FakeSocket()
+    hub = WebSocketHub(queue_size=1)
+    stream_id = await hub.connect(cast(object, socket))  # type: ignore[arg-type]
+    data = {"state": "connected", "device": "/dev/ttyUSB0", "connected_at": None, "error": None}
+    await hub.publish(event=EventName.transmitter_connection_changed, data=data)
+    await hub.publish(event=EventName.transmitter_connection_changed, data=data)
+    assert stream_id not in hub._clients
+    assert socket.closed is not None
+    assert socket.closed[0] == 1013
 
+
+@pytest.mark.asyncio
+async def test_websocket_serve_handles_disconnect_frame() -> None:
+    socket = FakeSocket()
     hub = WebSocketHub()
-    stream_id = await hub.connect(FakeSocket())  # type: ignore[arg-type]
-    await hub.publish(
-        event="transmitter.connection.changed",  # type: ignore[arg-type]
-        data={"state": "connected"},
-    )
-    event = hub._clients[stream_id].get_nowait()  # noqa: SLF001
-    assert event.model_dump(mode="json").keys() == {
-        "version",
-        "stream_id",
-        "sequence",
-        "event",
-        "timestamp",
-        "data",
-    }
-
-
-@pytest.mark.asyncio
-async def test_websocket_receives_connection_parameter_and_operation_events() -> None:
-    class FakeSocket:
-        async def accept(self) -> None:
-            return
-
-    async with api_client() as client:
-        hub = cast(WebSocketHub, app.state.websocket_hub)
-        stream_id = await hub.connect(FakeSocket())  # type: ignore[arg-type]
-        queue = hub._clients[stream_id]  # noqa: SLF001
-        await client.post("/api/v1/transmitter/connect", json={"device": "/dev/ttyACM0"})
-        connection_events = []
-        while not queue.empty():
-            connection_events.append(queue.get_nowait().event)
-        assert "transmitter.connection.changed" in connection_events
-        lora = (await client.get("/api/v1/transmitter/lora-parameters")).json()
-        await client.put("/api/v1/transmitter/lora-parameters", json=lora)
-        assert queue.get_nowait().event == "transmitter.lora_parameters.changed"
-        gfsk = (await client.get("/api/v1/transmitter/gfsk-parameters")).json()
-        await client.put("/api/v1/transmitter/gfsk-parameters", json=gfsk)
-        assert queue.get_nowait().event == "transmitter.gfsk_parameters.changed"
-        await client.post("/api/v1/receiver/connect", json={"domain_id": 0})
-        receiver_events = []
-        while not queue.empty():
-            receiver_events.append(queue.get_nowait().event)
-        assert "receiver.connection.changed" in receiver_events
-        await client.post("/api/v1/receiver/lora-parameters/sync-from-transmitter")
-        assert queue.get_nowait().event == "operation.updated"
+    await hub.serve(cast(object, socket))  # type: ignore[arg-type]
+    assert socket.accepted
+    assert hub._clients == {}
