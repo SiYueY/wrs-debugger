@@ -57,6 +57,8 @@ public:
     [[nodiscard]] Result<void, Error> set_fault_config(const FaultConfig& config);
     /** Atomically publishes a new PTY stable path and disconnects the old peer on success. */
     [[nodiscard]] Result<void, Error> set_transport_path(std::string stable_path);
+    /** Recreates the kernel-assigned PTY slave while preserving the configured stable path. */
+    [[nodiscard]] Result<void, Error> recreate_pty();
     [[nodiscard]] Result<void, Error> disconnect();
     [[nodiscard]] Result<void, Error> reconnect();
     [[nodiscard]] Result<void, Error> clear_history();

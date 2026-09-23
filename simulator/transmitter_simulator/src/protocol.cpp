@@ -10,8 +10,7 @@ constexpr std::size_t kFlags = 11, kResult = 39;
 bool valid_common(
     const ParamFlags& flags, std::int16_t power, std::uint8_t payload, std::uint8_t rssi,
     std::uint16_t heartbeat, std::uint8_t loss) noexcept {
-    return flags.one_to_one && power >= 0 && power <= 22 &&
-           (flags.band != Band::MHz433 || power <= 10) &&
+    return power >= 0 && power <= 22 && (flags.band != Band::MHz433 || power <= 10) &&
            (flags.band != Band::MHz915 || power <= 20) && payload == 12 && rssi >= 10 &&
            rssi <= 148 && heartbeat >= 200 && heartbeat <= 10000 && loss != 0;
 }
@@ -72,13 +71,13 @@ std::uint16_t ParamFlags::to_raw() const noexcept {
 }
 bool ParamFlags::from_raw(std::uint16_t raw, ParamFlags& flags) noexcept {
     const auto radio = static_cast<std::uint8_t>((raw >> 14U) & 3U);
-    if ((raw & 0x3fc0U) != 0U || radio > 1U || (raw & 0x10U) != 0U) return false;
+    if ((raw & 0x3fc0U) != 0U || radio > 1U) return false;
     flags.radio_type = radio == 0 ? RadioType::LoRa : RadioType::Gfsk;
     flags.band = (raw & 1U) ? Band::MHz915 : Band::MHz433;
     flags.crc_enabled = !(raw & 2U);
     flags.estop_enabled = !(raw & 4U);
     flags.heartbeat_enabled = !(raw & 8U);
-    flags.one_to_one = true;
+    flags.one_to_one = !(raw & 16U);
     flags.channel_scan = raw & 32U;
     return true;
 }

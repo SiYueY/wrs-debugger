@@ -31,6 +31,8 @@ public:
     [[nodiscard]] bool is_open() const noexcept;
     /** @brief Returns the identity captured by the successful open probe; zeroed when closed. */
     [[nodiscard]] const DeviceIdentity& identity() const noexcept;
+    /** @brief Uses normal communication to read the wireless E-stop box Device ID. */
+    [[nodiscard]] hardware::Result<std::array<std::uint8_t, 3>, Error> read_device_id() noexcept;
     /** @brief Reads and validates the complete current LoRa parameters. */
     [[nodiscard]] hardware::Result<LoRaParamFrame, Error> read_lora_parameters() noexcept;
     /** @brief Reads and validates the complete current GFSK parameters. */
@@ -47,7 +49,9 @@ public:
     [[nodiscard]] hardware::Result<PinFrame, Error> read_pin() noexcept;
     /** @brief Writes a six-digit PIN other than the reserved all-zero value. */
     [[nodiscard]] hardware::Result<void, Error> write_pin(const PinFrame& pin_frame) noexcept;
-    /** @brief Reads a 12-bit SDO object value. */
+    /** @brief Reads any protocol-defined 12-bit SDO object value. */
+    [[nodiscard]] hardware::Result<SdoFrame, Error> read_sdo(std::uint16_t object_address) noexcept;
+    /** @brief Compatibility overload for the stable SDO object enum. */
     [[nodiscard]] hardware::Result<SdoFrame, Error> read_sdo(SdoObject object) noexcept;
     /** @brief Writes the only V1 writable SDO object, UpgradeRequest. */
     [[nodiscard]] hardware::Result<void, Error> write_sdo(const SdoFrame& request_frame) noexcept;

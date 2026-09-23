@@ -1,5 +1,6 @@
 #include <cassert>
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <string>
 
@@ -7,6 +8,7 @@
 
 #include <transmitter/client.hpp>
 #include <transmitter/protocol.hpp>
+#include <serial/tool.hpp>
 #include <transmitter_simulator/fault.hpp>
 #include <transmitter_simulator/simulator.hpp>
 
@@ -24,11 +26,19 @@ void test_normal_path() {
     transmitter_simulator::SimulatorOptions options{};
     options.transport.stable_path = stable_path();
     assert(simulator.start(options));
+    const auto ports = serial::list_ports();
+    assert(ports);
+    assert(std::any_of(ports.value().begin(), ports.value().end(), [](const auto& port) {
+        return port.path.compare(0, 9, "/dev/pts/") == 0;
+    }));
     transmitter::Client client;
     assert(client.open(options.transport.stable_path, 300ms, 0ms, 1));
     assert(client.read_lora_parameters());
     assert(client.read_gfsk_parameters());
     assert(client.read_pin());
+    const auto device_id = client.read_device_id();
+    assert(device_id);
+    assert((device_id.value() == std::array<std::uint8_t, 3>{0xa1, 0xb2, 0xc3}));
     assert(client.read_sdo(transmitter::SdoObject::Battery));
     transmitter::SdoFrame upgrade{};
     upgrade.object_index = static_cast<std::uint16_t>(transmitter::SdoObject::UpgradeRequest);

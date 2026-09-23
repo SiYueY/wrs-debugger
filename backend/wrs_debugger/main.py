@@ -1,5 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
 
 from fastapi import FastAPI, WebSocket
@@ -15,7 +16,7 @@ from wrs_debugger.api.errors import (
 from wrs_debugger.api.routers import diagnostics, operations, receiver, system, transmitter
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.base import WrsGateway
-from wrs_debugger.gateway.mock import MockWrsGateway
+from wrs_debugger.gateway.pybind import PybindWrsGateway
 from wrs_debugger.models.connection import (
     ConnectionState,
     ReceiverConnection,
@@ -24,7 +25,7 @@ from wrs_debugger.models.connection import (
 from wrs_debugger.operations.manager import OperationManager
 from wrs_debugger.services.binding import FactoryBindingService
 from wrs_debugger.services.diagnostics import DiagnosticsService
-from wrs_debugger.services.native_executor import InlineMockExecutor
+from wrs_debugger.services.native_executor import InlineMockExecutor, ThreadedNativeExecutor
 from wrs_debugger.services.receiver import ReceiverService
 from wrs_debugger.services.runtime import Runtime, StateMirror
 from wrs_debugger.services.synchronization import SynchronizationService
@@ -35,15 +36,26 @@ from wrs_debugger.websocket.hub import WebSocketHub
 GatewayFactory = Callable[[], WrsGateway]
 
 
+async def monitor_transmitter_connection(service: TransmitterService) -> None:
+    """Detect a stopped simulator or unplugged transmitter while the UI is idle."""
+    while True:
+        await asyncio.sleep(1)
+        try:
+            await service.probe_connection()
+        except ApplicationError:
+            # call_transmitter already converges state and broadcasts the disconnect event.
+            continue
+
+
 def create_app(
     *,
     gateway_factory: GatewayFactory | None = None,
     settings_repository: SettingsRepository | None = None,
     backend_settings: BackendSettings | None = None,
 ) -> FastAPI:
-    factory = gateway_factory or MockWrsGateway
     repository = settings_repository or SettingsRepository()
     configured_settings = backend_settings or BackendSettings()
+    factory = gateway_factory or PybindWrsGateway
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -55,7 +67,7 @@ def create_app(
             publish=hub.publish,
             transmitter_connection=TransmitterConnection(state=ConnectionState.disconnected),
             receiver_connection=ReceiverConnection(state=ConnectionState.disconnected),
-            executor=InlineMockExecutor(),
+            executor=InlineMockExecutor() if gateway_factory is not None else ThreadedNativeExecutor(),
             state_mirror=state_mirror,
         )
         operation_manager = OperationManager(hub.publish)
@@ -73,9 +85,19 @@ def create_app(
         application.state.websocket_hub = hub
         application.state.backend_settings = configured_settings
         application.state.backend_instance_id = uuid4().hex
+        # gateway_factory is exclusively a test seam; production always monitors native I/O.
+        transmitter_monitor = (
+            asyncio.create_task(monitor_transmitter_connection(application.state.transmitter_service))
+            if gateway_factory is None
+            else None
+        )
         try:
             yield
         finally:
+            if transmitter_monitor is not None:
+                transmitter_monitor.cancel()
+                with suppress(asyncio.CancelledError):
+                    await transmitter_monitor
             await operation_manager.shutdown()
 
     application = FastAPI(title="WRS Debugger API", version=__version__, lifespan=lifespan)

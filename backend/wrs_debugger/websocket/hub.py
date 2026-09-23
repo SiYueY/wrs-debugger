@@ -81,9 +81,7 @@ class WebSocketHub:
             await asyncio.gather(sender, return_exceptions=True)
             await self.disconnect(stream_id)
 
-    async def _send_events(
-        self, socket: WebSocket, queue: asyncio.Queue[WebSocketEvent]
-    ) -> None:
+    async def _send_events(self, socket: WebSocket, queue: asyncio.Queue[WebSocketEvent]) -> None:
         while True:
             event = await queue.get()
             await socket.send_json(event.model_dump(mode="json"))

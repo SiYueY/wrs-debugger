@@ -40,6 +40,9 @@ constexpr std::size_t k_object = 5;
 constexpr std::size_t k_object_data = 7;
 constexpr std::size_t k_flags = 11;
 constexpr std::size_t k_result = 39;
+// A closed PTY master remains permanently POLLHUP-ready.  Probe once per second instead of
+// continuously; the host reconnect delay is bounded while an idle simulator consumes no core.
+constexpr auto k_pty_hangup_retry = std::chrono::seconds(1);
 
 std::uint32_t transaction_id(const Bytes& frame) noexcept {
     return frame.read_le32(
@@ -286,6 +289,22 @@ Result<void, Error> Simulator::set_transport_path(std::string stable_path) {
         return Error::None;
     });
 }
+Result<void, Error> Simulator::recreate_pty() {
+    return submit([this] {
+        if (lifecycle_ == LifecycleState::Stopped) return Error::InvalidState;
+
+        // The current master stays open during allocation, so devpts cannot reuse the
+        // old slave; the stable link is switched before the old peer is released.
+        const auto recreated = transport_.recreate();
+        if (!recreated) return recreated.error();
+        peer_ = PeerState::Detached;
+        rx_buffer_.clear();
+        pending_response_.reset();
+        lifecycle_ = LifecycleState::Running;
+        ++connection_generation_;
+        return Error::None;
+    });
+}
 Result<void, Error> Simulator::disconnect() {
     return submit([this] {
         transport_.disconnect();
@@ -322,8 +341,24 @@ Bytes Simulator::handle_frame(const Bytes& request, bool& should_respond) {
     if (!request.has_valid_crc()) return {};
     const auto command = static_cast<SystemCmd>(request[k_command]);
     if (command != SystemCmd::ParamReadReq && command != SystemCmd::ParamWriteReq &&
-        command != SystemCmd::PinCfgReq)
+        command != SystemCmd::NormalReq && command != SystemCmd::PinCfgReq)
         return {};
+    if (command == SystemCmd::NormalReq) {
+        const bool valid = request.is_zero(1, 39);
+        const bool forced_failure = valid && fault_.fail_next_business_response;
+        if (forced_failure) fault_.fail_next_business_response = false;
+        Bytes response{};
+        response[k_command] = static_cast<std::uint8_t>(SystemCmd::NormalRsp);
+        response[1] = 0xa1;
+        response[2] = 0xb2;
+        response[3] = 0xc3;
+        response[k_result] = valid && !forced_failure
+                                 ? static_cast<std::uint8_t>(ResultCode::Success)
+                                 : static_cast<std::uint8_t>(ResultCode::Failure);
+        response.fill_crc();
+        should_respond = true;
+        return response;
+    }
     const auto transaction = transaction_id(request);
     if (transaction == 0) return {};
     const auto object = request.read_le16(k_object);
@@ -563,6 +598,7 @@ void Simulator::write_frame(const Bytes& frame) noexcept {
 
 void Simulator::worker() noexcept {
     std::array<std::uint8_t, 256> received{};
+    auto retry_pty_at = std::chrono::steady_clock::time_point::min();
     while (!stop_requested_.load()) {
         int fd = -1;
         int wake_fd = -1;
@@ -570,10 +606,15 @@ void Simulator::worker() noexcept {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             deliver_pending_response();
-            if (lifecycle_ == LifecycleState::Running) fd = transport_.native_handle();
+            const auto now = std::chrono::steady_clock::now();
+            // With no slave peer, a Linux PTY master reports POLLHUP immediately.
+            // Do not poll that permanently-ready descriptor in a tight loop; probe it
+            // periodically so a newly opened slave is still noticed promptly.
+            if (lifecycle_ == LifecycleState::Running && now >= retry_pty_at)
+                fd = transport_.native_handle();
             wake_fd = wake_fd_;
             if (pending_response_) {
-                const auto remaining = pending_response_->due - std::chrono::steady_clock::now();
+                const auto remaining = pending_response_->due - now;
                 timeout_ms =
                     remaining <= std::chrono::steady_clock::duration::zero()
                         ? 0
@@ -581,6 +622,14 @@ void Simulator::worker() noexcept {
                               std::chrono::duration_cast<std::chrono::milliseconds>(remaining)
                                   .count(),
                               100));
+            }
+            if (fd < 0 && retry_pty_at > now) {
+                const auto retry_remaining = retry_pty_at - now;
+                timeout_ms = std::min(
+                    timeout_ms,
+                    static_cast<int>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(retry_remaining)
+                            .count()));
             }
         }
         std::array<pollfd, 2> descriptors{{{wake_fd, POLLIN, 0}, {fd, POLLIN, 0}}};
@@ -593,18 +642,30 @@ void Simulator::worker() noexcept {
             }
             process_control_commands();
         }
-        if (stop_requested_.load() || lifecycle_ != LifecycleState::Running ||
-            (count == 2UL && (descriptors[1].revents & POLLIN) == 0)) {
-            if (count == 2UL && (descriptors[1].revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
+        const short pty_events = count == 2UL ? descriptors[1].revents : 0;
+        const bool pty_unavailable = (pty_events & (POLLHUP | POLLERR | POLLNVAL)) != 0;
+        if (stop_requested_.load() || lifecycle_ != LifecycleState::Running || pty_unavailable ||
+            (count == 2UL && (pty_events & POLLIN) == 0)) {
+            // A PTY can report POLLIN and POLLHUP together.  HUP must win: attempting a
+            // read then returns EIO and would immediately re-enter poll on the same
+            // permanently-ready descriptor, consuming one CPU core after the host closes.
+            if (pty_unavailable) {
                 peer_ = PeerState::Detached;
+                retry_pty_at = std::chrono::steady_clock::now() + k_pty_hangup_retry;
+            }
             continue;
         }
         auto result = transport_.read(received.data(), received.size());
         if (!result) {
             peer_ = PeerState::Detached;
+            retry_pty_at = std::chrono::steady_clock::now() + k_pty_hangup_retry;
             continue;
         }
-        if (result.value() == 0) continue;
+        if (result.value() == 0) {
+            // Guard against a spurious readable readiness notification on a nonblocking PTY.
+            retry_pty_at = std::chrono::steady_clock::now() + k_pty_hangup_retry;
+            continue;
+        }
         peer_ = PeerState::Active;
         rx_buffer_.insert(rx_buffer_.end(), received.begin(), received.begin() + result.value());
         while (rx_buffer_.size() >= kFrameSize) {

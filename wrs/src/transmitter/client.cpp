@@ -99,8 +99,7 @@ bool is_zero(const std::uint8_t* bytes, std::size_t size) noexcept {
 bool valid_param_flags(std::uint16_t raw_flags, RadioType expected_type) noexcept {
     constexpr std::uint16_t kReservedBits = 0x3fc0;
     const auto radio_type = static_cast<std::uint8_t>((raw_flags >> 14) & 0x3);
-    if ((raw_flags & kReservedBits) != 0 || radio_type > 1 || (raw_flags & 0x0010) != 0)
-        return false;
+    if ((raw_flags & kReservedBits) != 0 || radio_type > 1) return false;
     return radio_type == static_cast<std::uint8_t>(expected_type);
 }
 
@@ -192,6 +191,7 @@ Error sdo_status_error(std::uint16_t status) noexcept {
 }
 
 std::uint32_t response_transaction_id(const Bytes& bytes, SystemCmd expected) noexcept {
+    if (expected == SystemCmd::NormalRsp) return 0;
     return expected == SystemCmd::PinCfgRsp ? read_le32(bytes.bytes() + 12)
                                             : read_le32(bytes.bytes() + 1);
 }
@@ -303,6 +303,18 @@ bool Client::is_open() const noexcept { return port_.is_open(); }
 
 const DeviceIdentity& Client::identity() const noexcept { return identity_; }
 
+hardware::Result<std::array<std::uint8_t, 3>, Error> Client::read_device_id() noexcept {
+    if (!is_open()) return Result<std::array<std::uint8_t, 3>>::failure(Error::NotOpen);
+    NormalFrame request{};
+    request.cmd = static_cast<std::uint8_t>(SystemCmd::NormalReq);
+    auto response = exchange(request.to_bytes(), 0, SystemCmd::NormalRsp);
+    if (!response) return Result<std::array<std::uint8_t, 3>>::failure(response.error());
+    const auto frame = NormalFrame::from_bytes(response.value());
+    if (!is_zero(frame.reserved.data(), frame.reserved.size()))
+        return Result<std::array<std::uint8_t, 3>>::failure(Error::InvalidResponse);
+    return Result<std::array<std::uint8_t, 3>>::success(frame.device_id);
+}
+
 std::uint32_t Client::next_transaction() noexcept {
     const auto value = next_transaction_id_++;
     if (next_transaction_id_ == 0) {
@@ -387,12 +399,13 @@ hardware::Result<Bytes, Error> Client::exchange(
     return Result<Bytes>::failure(Error::TimedOut);
 }
 
-hardware::Result<SdoFrame, Error> Client::read_sdo(SdoObject object) noexcept {
+hardware::Result<SdoFrame, Error> Client::read_sdo(std::uint16_t object_address) noexcept {
     if (!is_open()) return Result<SdoFrame>::failure(Error::NotOpen);
+    if ((object_address & 0xf000U) != 0U) return Result<SdoFrame>::failure(Error::InvalidArgument);
     SdoFrame request{};
     request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadReq);
     request.transaction_id = next_transaction();
-    request.object_index = static_cast<std::uint16_t>(object);
+    request.object_index = object_address;
     auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamReadRsp);
     if (!response) return Result<SdoFrame>::failure(response.error());
     const auto frame = SdoFrame::from_bytes(response.value());
@@ -402,6 +415,10 @@ hardware::Result<SdoFrame, Error> Client::read_sdo(SdoObject object) noexcept {
     if (status != static_cast<std::uint16_t>(SdoStatus::ReadSuccess))
         return Result<SdoFrame>::failure(sdo_status_error(status));
     return Result<SdoFrame>::success(frame);
+}
+
+hardware::Result<SdoFrame, Error> Client::read_sdo(SdoObject object) noexcept {
+    return read_sdo(static_cast<std::uint16_t>(object));
 }
 
 hardware::Result<void, Error> Client::write_sdo(const SdoFrame& request_frame) noexcept {

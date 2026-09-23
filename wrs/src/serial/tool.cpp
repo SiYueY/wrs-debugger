@@ -1,6 +1,7 @@
 #include <serial/tool.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -89,6 +90,27 @@ hardware::Result<std::vector<PortInfo>, Error> list_ports() noexcept {
             enrich_usb(device, info);
             ports.push_back(std::move(info));
         }
+
+        fs::directory_iterator pty_iterator("/dev/pts", error);
+        if (!error) {
+            for (const auto& entry : pty_iterator) {
+                const auto name = entry.path().filename().string();
+                if (name.empty() || !std::all_of(name.begin(), name.end(), [](unsigned char value) {
+                        return std::isdigit(value) != 0;
+                    })) {
+                    continue;
+                }
+                if (!fs::exists(entry.path(), error)) {
+                    error.clear();
+                    continue;
+                }
+                PortInfo info{};
+                info.path = entry.path().string();
+                info.description = "Pseudo terminal";
+                ports.push_back(std::move(info));
+            }
+        }
+        error.clear();
 
         std::sort(ports.begin(), ports.end(), [](const PortInfo& left, const PortInfo& right) {
             return left.path < right.path;

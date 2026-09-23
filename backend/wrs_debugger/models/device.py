@@ -34,3 +34,18 @@ class PinResponse(ApiModel):
 
 class WritePinRequest(ApiModel):
     pin: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class SdoReadRequest(ApiModel):
+    object_address: int = Field(ge=1, le=0x0FFF)
+
+
+class SdoWriteRequest(SdoReadRequest):
+    object_data: int = Field(ge=0, le=0xFFFFFFFF)
+
+
+class SdoResponse(ApiModel):
+    object_address: int = Field(ge=1, le=0x0FFF)
+    object_data: int = Field(ge=0, le=0xFFFFFFFF)
+    status: int = Field(ge=0, le=0xF)
+    result_code: int = Field(ge=0, le=255)

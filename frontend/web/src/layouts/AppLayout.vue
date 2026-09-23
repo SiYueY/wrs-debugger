@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onBeforeUnmount, onMounted } from 'vue';
 import AppNavTabs from '../components/AppNavTabs.vue';
 import AppToolbar from '../components/AppToolbar.vue';
 import { useDebuggerStore } from '../stores/debugger';
@@ -7,6 +7,8 @@ const store = useDebuggerStore();
 onMounted(() => {
   void store.bootstrap();
 });
+const stopEvents = store.startEvents();
+onBeforeUnmount(stopEvents);
 </script>
 <template>
   <main class="app">

@@ -9,6 +9,7 @@ from wrs_debugger.models.connection import (
 )
 from wrs_debugger.models.device import (
     PinResponse,
+    SdoResponse,
     SerialPortListResponse,
     TransmitterInfo,
     WritePinRequest,
@@ -96,10 +97,42 @@ class TransmitterService:
             await self._publish_connection()
             return self.connection()
 
+    async def probe_connection(self) -> None:
+        """Perform one protocol round-trip when a transmitter is connected."""
+        if not self._is_connected():
+            return
+        async with self.runtime.transmitter_lock:
+            # The connection may have changed while the monitor waited for an operation.
+            if not self._is_connected():
+                return
+            await self.runtime.call_transmitter(self.runtime.gateway.probe_transmitter)
+
     async def info(self) -> TransmitterInfo:
         self._require_connected()
         async with self.runtime.transmitter_lock:
             return await self.runtime.call_transmitter(self.runtime.gateway.read_transmitter_info)
+
+    async def read_sdo(self, object_address: int) -> SdoResponse:
+        self._require_connected()
+        async with self.runtime.transmitter_lock:
+            return await self.runtime.call_transmitter(
+                lambda: self.runtime.gateway.read_transmitter_sdo(object_address)
+            )
+
+    async def write_sdo(self, object_address: int, object_data: int) -> SdoResponse:
+        self._require_connected()
+        if object_address != 0x202:
+            raise ApplicationError(
+                "SDO_READ_ONLY", 403, "SDO object is read-only", "Only object 0X202 is writable."
+            )
+        if object_data != 0x454E:
+            raise ApplicationError(
+                "SDO_INVALID_VALUE", 422, "Invalid SDO value", "Object 0X202 requires 0X0000454E."
+            )
+        async with self.runtime.transmitter_lock:
+            return await self.runtime.call_transmitter(
+                lambda: self.runtime.gateway.write_transmitter_sdo(object_address, object_data)
+            )
 
     async def read_pin(self) -> PinResponse:
         self._require_connected()
@@ -170,7 +203,7 @@ class TransmitterService:
 
     def _require_connected(self) -> None:
         self.runtime.require_no_cross_device_operation()
-        if self.runtime.transmitter_connection.state != ConnectionState.connected:
+        if not self._is_connected():
             raise ApplicationError(
                 "TRANSMITTER_NOT_CONNECTED",
                 409,
@@ -178,9 +211,10 @@ class TransmitterService:
                 "Transmitter must be connected for this operation.",
             )
 
-    async def _set_failed_connection(
-        self, device: str | None, code: str, detail: str
-    ) -> None:
+    def _is_connected(self) -> bool:
+        return self.runtime.transmitter_connection.state == ConnectionState.connected
+
+    async def _set_failed_connection(self, device: str | None, code: str, detail: str) -> None:
         self.runtime.set_transmitter_connection(
             TransmitterConnection(
                 state=ConnectionState.failed,

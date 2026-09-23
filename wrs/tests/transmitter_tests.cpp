@@ -114,6 +114,22 @@ void test_pin_device_key_and_sdo() {
     assert(sdo_bytes[5] == 1 && sdo_bytes[6] == 0x40 && sdo_bytes[11] == 0);
     const auto decoded = SdoFrame::from_bytes(sdo_bytes);
     assert(decoded.object_index == 0x4001 && decoded.object_data == 0x44332211);
+
+    NormalFrame normal{};
+    normal.cmd = static_cast<std::uint8_t>(SystemCmd::NormalRsp);
+    normal.device_id = {0xa1, 0xb2, 0xc3};
+    normal.wireless_counter = 0x81234567;
+    normal.receiver_status = 0x0011;
+    normal.rssi = 72;
+    normal.snr = -24;
+    const auto normal_bytes = normal.to_bytes();
+    assert(normal_bytes[0] == 0x86 && normal_bytes[1] == 0xa1 && normal_bytes[3] == 0xc3);
+    assert(normal_bytes[4] == 0x67 && normal_bytes[7] == 0x81 && has_valid_crc(normal_bytes));
+    const auto decoded_normal = NormalFrame::from_bytes(normal_bytes);
+    assert(decoded_normal.device_id == normal.device_id);
+    assert(decoded_normal.wireless_counter == normal.wireless_counter);
+    assert(decoded_normal.receiver_status == normal.receiver_status);
+    assert(decoded_normal.snr == normal.snr);
 }
 
 bool read_all(int fd, std::uint8_t* bytes, std::size_t size) {
@@ -248,6 +264,38 @@ void test_client_reads_pin_with_ascii_zero_request() {
     assert(::close(slave) == 0);
 }
 
+void test_client_reads_device_id_with_normal_communication() {
+    int master = -1;
+    int slave = -1;
+    char path[128]{};
+    assert(::openpty(&master, &slave, path, nullptr, nullptr) == 0);
+    std::thread device([master] {
+        Bytes request{};
+        for (std::uint32_t value = 1; value <= 3; ++value) {
+            assert(read_all(master, request.bytes(), request.size()));
+            const auto response = successful_sdo_response(request, value);
+            assert(write_all(master, response.bytes(), response.size()));
+        }
+        assert(read_all(master, request.bytes(), request.size()));
+        assert(request[0] == static_cast<std::uint8_t>(SystemCmd::NormalReq));
+        for (std::size_t index = 1; index < kFrameBodySize; ++index) assert(request[index] == 0);
+        NormalFrame response{};
+        response.cmd = static_cast<std::uint8_t>(SystemCmd::NormalRsp);
+        response.device_id = {0xa1, 0xb2, 0xc3};
+        const auto response_bytes = response.to_bytes();
+        assert(write_all(master, response_bytes.bytes(), response_bytes.size()));
+    });
+    Client client{};
+    assert(client.open(path, std::chrono::milliseconds(100), std::chrono::milliseconds(0), 1));
+    const auto result = client.read_device_id();
+    assert(result);
+    assert((result.value() == std::array<std::uint8_t, 3>{0xa1, 0xb2, 0xc3}));
+    (void)client.close();
+    device.join();
+    assert(::close(master) == 0);
+    assert(::close(slave) == 0);
+}
+
 void test_client_rejects_invalid_gfsk_parameters() {
     int master = -1;
     int slave = -1;
@@ -295,5 +343,6 @@ int main() {
     test_pin_device_key_and_sdo();
     test_client_rejects_invalid_responses();
     test_client_reads_pin_with_ascii_zero_request();
+    test_client_reads_device_id_with_normal_communication();
     test_client_rejects_invalid_gfsk_parameters();
 }

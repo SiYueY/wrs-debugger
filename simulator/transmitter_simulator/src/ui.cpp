@@ -6,7 +6,9 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
+#include <type_traits>
 
 #include <imgui.h>
 
@@ -60,30 +62,39 @@ void key_value(const char* key, const char* value) {
     ImGui::SameLine(172);
     ImGui::TextUnformatted(value);
 }
-void input_i16(const char* label, std::int16_t& value) {
-    int input = value;
-    ImGui::SetNextItemWidth(-1.0F);
-    ImGui::InputInt(label, &input);
-    value = static_cast<std::int16_t>(std::clamp(input, -32768, 32767));
+void readonly_path_field(const char* label, const char* id, const std::string& value) {
+    std::array<char, PATH_MAX> buffer{};
+    std::strncpy(buffer.data(), value.c_str(), buffer.size() - 1);
+    ImGui::TextDisabled("%s", label);
+    ImGui::SetNextItemWidth(-70.0F);
+    ImGui::InputText(
+        (std::string("##") + id).c_str(), buffer.data(), buffer.size(),
+        ImGuiInputTextFlags_ReadOnly);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", value.c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton((std::string("Copy##") + id).c_str()))
+        ImGui::SetClipboardText(value.c_str());
 }
-void input_u8(const char* label, std::uint8_t& value) {
-    int input = value;
-    ImGui::SetNextItemWidth(-1.0F);
-    ImGui::InputInt(label, &input);
-    value = static_cast<std::uint8_t>(std::clamp(input, 0, 255));
-}
-void input_u16(const char* label, std::uint16_t& value) {
-    int input = value;
-    ImGui::SetNextItemWidth(-1.0F);
-    ImGui::InputInt(label, &input);
-    value = static_cast<std::uint16_t>(std::clamp(input, 0, 65535));
-}
-void input_u32(const char* label, std::uint32_t& value, bool hexadecimal = false) {
+template <typename Value>
+void hex_input(const char* id, Value& value, const char* format) {
+    ImGui::TextDisabled("0X");
+    ImGui::SameLine(0.0F, 2.0F);
     ImGui::SetNextItemWidth(-1.0F);
     ImGui::InputScalar(
-        label, ImGuiDataType_U32, &value, nullptr, nullptr, hexadecimal ? "%08X" : "%u",
-        hexadecimal ? ImGuiInputTextFlags_CharsHexadecimal : 0);
+        id,
+        std::is_same_v<Value, std::uint8_t>    ? ImGuiDataType_U8
+        : std::is_same_v<Value, std::uint16_t> ? ImGuiDataType_U16
+                                               : ImGuiDataType_U32,
+        &value, nullptr, nullptr, format, ImGuiInputTextFlags_CharsHexadecimal);
 }
+void input_i16(const char* id, std::int16_t& value) {
+    auto raw = static_cast<std::uint16_t>(value);
+    hex_input(id, raw, "%04X");
+    value = static_cast<std::int16_t>(raw);
+}
+void input_u8(const char* id, std::uint8_t& value) { hex_input(id, value, "%02X"); }
+void input_u16(const char* id, std::uint16_t& value) { hex_input(id, value, "%04X"); }
+void input_u32(const char* id, std::uint32_t& value) { hex_input(id, value, "%08X"); }
 std::string hex_bytes(const Bytes& bytes, std::size_t offset, std::size_t count) {
     std::string text;
     for (std::size_t i = 0; i < count; ++i) {
@@ -110,7 +121,7 @@ std::array<std::uint8_t, Size> metadata_from_text(const std::array<char, Size + 
 }
 
 void device_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
-    static std::array<char, 512> pending_path{};
+    static std::array<char, PATH_MAX> pending_path{};
     static bool path_dirty = false;
     static std::string path_error{};
     if (!path_dirty && std::string(pending_path.data()) != snapshot.stable_path) {
@@ -120,17 +131,16 @@ void device_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
     ImGui::TextColored(k_accent, "DEVICE");
     ImGui::TextDisabled(
         "Transport and runtime status only. Configure state in Parameter, PIN, and SDO.");
-    if (ImGui::BeginTable("device_cards", 2, ImGuiTableFlags_SizingStretchSame)) {
+    if (ImGui::BeginTable("device_columns", 2, ImGuiTableFlags_SizingStretchSame)) {
         ImGui::TableNextColumn();
-        ImGui::BeginChild("transport", ImVec2(0, 212), true, ImGuiWindowFlags_NoScrollbar);
-        ImGui::TextColored(k_accent, "TRANSPORT");
-        ImGui::Separator();
-        key_value("PTY slave", snapshot.slave_path.c_str());
-        key_value("Stable path", snapshot.stable_path.c_str());
+        ImGui::SeparatorText("TRANSPORT");
+        readonly_path_field("PTY slave", "pty-slave", snapshot.slave_path);
+        readonly_path_field("Stable path", "stable-path-current", snapshot.stable_path);
         key_value("Lifecycle", lifecycle_name(snapshot.lifecycle));
         key_value("Host peer", snapshot.peer == PeerState::Active ? "Active" : "Detached");
         ImGui::Spacing();
-        ImGui::TextDisabled("Stable virtual serial path");
+        ImGui::SeparatorText("Stable virtual serial path");
+        ImGui::TextDisabled("Change the published link, then recreate transport safely.");
         ImGui::SetNextItemWidth(-1.0F);
         if (ImGui::InputText("##stable-path", pending_path.data(), pending_path.size())) {
             path_dirty = true;
@@ -142,7 +152,7 @@ void device_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
             ImGui::TextColored(k_bad, "Path must be absolute.");
         if (!path_error.empty()) ImGui::TextColored(k_bad, "%s", path_error.c_str());
         if (!path_changed || !absolute) ImGui::BeginDisabled();
-        if (ImGui::Button("Apply & Reconnect")) {
+        if (ImGui::Button("Apply stable path")) {
             const auto result = simulator.set_transport_path(pending_path.data());
             if (result) {
                 path_dirty = false;
@@ -151,11 +161,16 @@ void device_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
                 path_error = error_name(result.error());
         }
         if (!path_changed || !absolute) ImGui::EndDisabled();
-        ImGui::EndChild();
+        ImGui::SameLine();
+        if (snapshot.lifecycle != LifecycleState::Running) ImGui::BeginDisabled();
+        if (ImGui::Button("Recreate PTY")) {
+            const auto result = simulator.recreate_pty();
+            path_error = result ? "" : error_name(result.error());
+        }
+        if (snapshot.lifecycle != LifecycleState::Running) ImGui::EndDisabled();
+        ImGui::TextDisabled("PTY slave is allocated by Linux; recreate it to obtain a new slave.");
         ImGui::TableNextColumn();
-        ImGui::BeginChild("runtime", ImVec2(0, 212), true, ImGuiWindowFlags_NoScrollbar);
-        ImGui::TextColored(k_accent, "RUNTIME");
-        ImGui::Separator();
+        ImGui::SeparatorText("RUNTIME");
         ImGui::Text("RX frames  %zu", snapshot.rx_frames);
         ImGui::Text("TX frames  %zu", snapshot.tx_frames);
         ImGui::Spacing();
@@ -170,12 +185,11 @@ void device_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
             if (ImGui::Button("Reconnect simulator")) (void)simulator.reconnect();
             ImGui::PopStyleColor();
         }
-        ImGui::EndChild();
         ImGui::EndTable();
     }
 }
 
-void table_row_start(const char* bytes, const char* field) {
+void parameter_row_start(const char* bytes, const char* field) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::TextDisabled("%s", bytes);
@@ -183,36 +197,52 @@ void table_row_start(const char* bytes, const char* field) {
     ImGui::TextUnformatted(field);
     ImGui::TableSetColumnIndex(2);
 }
-void table_row_end(const char* rule) {
+void parameter_row_end(const char* rule) {
     ImGui::TableSetColumnIndex(3);
     ImGui::TextDisabled("%s", rule);
 }
-void fixed_row(
+void fixed_parameter_row(
     const char* bytes, const char* field, const Bytes& preview, std::size_t offset,
     std::size_t count, const char* rule) {
-    table_row_start(bytes, field);
+    parameter_row_start(bytes, field);
     const auto value = hex_bytes(preview, offset, count);
     ImGui::TextUnformatted(value.c_str());
-    table_row_end(rule);
+    parameter_row_end(rule);
 }
 void flags_editor(ParamFlags& flags, bool gfsk) {
-    ImGui::TextDisabled("0x%04X", flags.to_raw());
-    ImGui::SameLine();
-    int band = flags.band == Band::MHz915 ? 1 : 0;
-    const char* bands[] = {"433 MHz", "915 MHz"};
-    ImGui::SetNextItemWidth(95);
-    ImGui::Combo("##band", &band, bands, 2);
-    flags.band = band == 0 ? Band::MHz433 : Band::MHz915;
-    ImGui::SameLine();
-    ImGui::Checkbox("CRC##flags", &flags.crc_enabled);
-    ImGui::SameLine();
-    ImGui::Checkbox("E-stop##flags", &flags.estop_enabled);
-    ImGui::SameLine();
-    ImGui::Checkbox("Heartbeat##flags", &flags.heartbeat_enabled);
-    ImGui::SameLine();
-    ImGui::Checkbox("Scan##flags", &flags.channel_scan);
     flags.radio_type = gfsk ? RadioType::Gfsk : RadioType::LoRa;
-    flags.one_to_one = true;
+    int band = flags.band == Band::MHz915 ? 1 : 0;
+    const char* bands[] = {"0X0 (433 MHz)", "0X1 (915 MHz)"};
+    parameter_row_start("", "Raw parameter flags");
+    ImGui::TextDisabled("0X%04X", flags.to_raw());
+    parameter_row_end(gfsk ? "GFSK flags" : "LoRa flags");
+    parameter_row_start("", "Operation type");
+    ImGui::TextDisabled("%s", gfsk ? "0X1 (GFSK)" : "0X0 (LoRa)");
+    parameter_row_end("read-only modulation selector");
+    parameter_row_start("", "Frequency band");
+    ImGui::SetNextItemWidth(120.0F);
+    ImGui::Combo("##parameter-band", &band, bands, 2);
+    flags.band = band == 0 ? Band::MHz433 : Band::MHz915;
+    parameter_row_end("bit 0");
+    parameter_row_start("", "PHY CRC");
+    ImGui::Checkbox("CRC##parameter-flags", &flags.crc_enabled);
+    parameter_row_end("bit 1");
+    parameter_row_start("", "Wireless emergency stop");
+    ImGui::Checkbox("E-stop##parameter-flags", &flags.estop_enabled);
+    parameter_row_end("bit 2");
+    parameter_row_start("", "Heartbeat");
+    ImGui::Checkbox("Heartbeat##parameter-flags", &flags.heartbeat_enabled);
+    parameter_row_end("bit 3");
+    parameter_row_start("", "Channel scan");
+    ImGui::Checkbox("Scan##parameter-flags", &flags.channel_scan);
+    parameter_row_end("bit 5");
+    parameter_row_start("", "Group mode");
+    const char* group_modes[] = {"0X0 (One-to-one)", "0X1 (One-to-many)"};
+    int group_mode = flags.one_to_one ? 0 : 1;
+    ImGui::SetNextItemWidth(145.0F);
+    ImGui::Combo("##parameter-group-mode", &group_mode, group_modes, 2);
+    flags.one_to_one = group_mode == 0;
+    parameter_row_end("bit 4");
 }
 void lora_rows(LoraConfig& config) {
     LoRaParamFrame frame{};
@@ -220,52 +250,56 @@ void lora_rows(LoraConfig& config) {
     frame.transaction_id = 1;
     frame.config = config;
     const Bytes preview = frame.to_bytes();
-    fixed_row("Byte0", "System command", preview, 0, 1, "0x05 write request");
-    fixed_row("Byte1-4", "Transaction ID", preview, 1, 4, "preview ID 1 (automatic)");
-    fixed_row("Byte5-6", "Object Index", preview, 5, 2, "0x0000 radio config");
-    fixed_row("Byte7-10", "Object Data", preview, 7, 4, "0 for radio config");
-    table_row_start("Byte11-12", "Parameter flags");
+    fixed_parameter_row("Byte0", "System command", preview, 0, 1, "0X05 write request");
+    fixed_parameter_row("Byte1-4", "Transaction ID", preview, 1, 4, "preview ID 1 (automatic)");
+    fixed_parameter_row("Byte5-6", "Object Index", preview, 5, 2, "0X0000 radio configuration");
+    fixed_parameter_row(
+        "Byte7-10", "Object Data", preview, 7, 4, "0X00000000 for radio configuration");
+    parameter_row_start("Byte11-12", "Parameter flags");
+    ImGui::TextDisabled("See expanded fields below");
+    parameter_row_end("LoRa / band / CRC / E-stop / heartbeat / scan");
     flags_editor(config.flags, false);
-    table_row_end("LoRa / band / CRC / E-stop / heartbeat / scan");
-    table_row_start("Byte13-14", "TX power (dBm)");
+    parameter_row_start("Byte13-14", "TX power (dBm)");
     input_i16("##lora-power", config.tx_power);
-    table_row_end("0-10 @433; 0-20 @915");
-    table_row_start("Byte15-16", "Frequency offset (kHz)");
+    parameter_row_end("0-10 @433; 0-20 @915");
+    parameter_row_start("Byte15-16", "Frequency offset (kHz)");
     input_u16("##lora-offset", config.frequency_offset);
-    table_row_end("center frequency offset");
-    table_row_start("Byte17", "Payload length");
+    parameter_row_end("center frequency offset");
+    parameter_row_start("Byte17", "Payload length");
     input_u8("##lora-payload", config.payload_length);
-    table_row_end("fixed 12 bytes");
-    table_row_start("Byte18", "RSSI threshold raw");
+    parameter_row_end("fixed 12 bytes");
+    parameter_row_start("Byte18", "RSSI threshold raw");
     input_u8("##lora-rssi", config.rssi_threshold);
-    table_row_end("10-148; threshold = -raw dBm");
-    table_row_start("Byte19-20", "Heartbeat interval (ms)");
+    parameter_row_end("10-148; threshold = -raw dBm");
+    parameter_row_start("Byte19-20", "Heartbeat interval (ms)");
     input_u16("##lora-heartbeat", config.heartbeat_interval);
-    table_row_end("200-10000");
-    table_row_start("Byte21", "Heartbeat loss threshold");
+    parameter_row_end("200-10000");
+    parameter_row_start("Byte21", "Heartbeat loss threshold");
     input_u8("##lora-loss", config.heartbeat_loss);
-    table_row_end("1-255 packets");
-    table_row_start("Byte22", "Receive bandwidth");
+    parameter_row_end("1-255 packets");
+    parameter_row_start("Byte22", "Receive bandwidth");
     input_u8("##lora-bandwidth", config.bandwidth);
-    table_row_end("0=125, 1=250, 2=500 kHz");
-    table_row_start("Byte23", "Spreading factor");
+    parameter_row_end("0=125, 1=250, 2=500 kHz");
+    parameter_row_start("Byte23", "Spreading factor");
     input_u8("##lora-sf", config.spreading_factor);
-    table_row_end("SF5-SF12");
-    table_row_start("Byte24", "Coding rate");
+    parameter_row_end("SF5-SF12");
+    parameter_row_start("Byte24", "Coding rate");
     input_u8("##lora-coding", config.coding_rate);
-    table_row_end("0-6 protocol enumeration");
-    table_row_start("Byte25", "Header type");
+    parameter_row_end("0-6 protocol enumeration");
+    parameter_row_start("Byte25", "Header type");
     input_u8("##lora-header", config.header_type);
-    table_row_end("0=explicit; 1=implicit");
-    table_row_start("Byte26", "Preamble length");
+    parameter_row_end("0=explicit; 1=implicit");
+    parameter_row_start("Byte26", "Preamble length");
     input_u8("##lora-preamble", config.preamble_length);
-    table_row_end("10-50; SF5/SF6 require 12");
-    table_row_start("Byte27-28", "Sync word");
+    parameter_row_end("10-50; SF5/SF6 require 12");
+    parameter_row_start("Byte27-28", "Sync word");
     input_u16("##lora-sync", config.sync_word);
-    table_row_end("0xY4X4");
-    fixed_row("Byte29-38", "Reserved", preview, 29, 10, "fixed 0");
-    fixed_row("Byte39", "Result code", preview, 39, 1, "fixed 0");
-    fixed_row("Byte40-41", "CRC16-XMODEM", preview, 40, 2, "calculated automatically");
+    parameter_row_end("0xY4X4");
+    frame.config = config;
+    const Bytes encoded = frame.to_bytes();
+    fixed_parameter_row("Byte29-38", "Reserved", encoded, 29, 10, "fixed 0");
+    fixed_parameter_row("Byte39", "Result code", encoded, 39, 1, "fixed 0");
+    fixed_parameter_row("Byte40-41", "CRC16-XMODEM", encoded, 40, 2, "calculated automatically");
 }
 void gfsk_rows(GfskConfig& config) {
     GfskParamFrame frame{};
@@ -273,52 +307,56 @@ void gfsk_rows(GfskConfig& config) {
     frame.transaction_id = 1;
     frame.config = config;
     const Bytes preview = frame.to_bytes();
-    fixed_row("Byte0", "System command", preview, 0, 1, "0x05 write request");
-    fixed_row("Byte1-4", "Transaction ID", preview, 1, 4, "preview ID 1 (automatic)");
-    fixed_row("Byte5-6", "Object Index", preview, 5, 2, "0x0000 radio config");
-    fixed_row("Byte7-10", "Object Data", preview, 7, 4, "0 for radio config");
-    table_row_start("Byte11-12", "Parameter flags");
+    fixed_parameter_row("Byte0", "System command", preview, 0, 1, "0X05 write request");
+    fixed_parameter_row("Byte1-4", "Transaction ID", preview, 1, 4, "preview ID 1 (automatic)");
+    fixed_parameter_row("Byte5-6", "Object Index", preview, 5, 2, "0X0000 radio configuration");
+    fixed_parameter_row(
+        "Byte7-10", "Object Data", preview, 7, 4, "0X00000000 for radio configuration");
+    parameter_row_start("Byte11-12", "Parameter flags");
+    ImGui::TextDisabled("See expanded fields below");
+    parameter_row_end("GFSK / band / CRC / E-stop / heartbeat / scan");
     flags_editor(config.flags, true);
-    table_row_end("GFSK / band / CRC / E-stop / heartbeat / scan");
-    table_row_start("Byte13-14", "TX power (dBm)");
+    parameter_row_start("Byte13-14", "TX power (dBm)");
     input_i16("##gfsk-power", config.tx_power);
-    table_row_end("0-10 @433; 0-20 @915");
-    table_row_start("Byte15-16", "Frequency offset (kHz)");
+    parameter_row_end("0-10 @433; 0-20 @915");
+    parameter_row_start("Byte15-16", "Frequency offset (kHz)");
     input_u16("##gfsk-offset", config.frequency_offset);
-    table_row_end("center frequency offset");
-    table_row_start("Byte17", "Payload length");
+    parameter_row_end("center frequency offset");
+    parameter_row_start("Byte17", "Payload length");
     input_u8("##gfsk-payload", config.payload_length);
-    table_row_end("fixed 12 bytes");
-    table_row_start("Byte18", "RSSI threshold raw");
+    parameter_row_end("fixed 12 bytes");
+    parameter_row_start("Byte18", "RSSI threshold raw");
     input_u8("##gfsk-rssi", config.rssi_threshold);
-    table_row_end("10-148; threshold = -raw dBm");
-    table_row_start("Byte19-20", "Heartbeat interval (ms)");
+    parameter_row_end("10-148; threshold = -raw dBm");
+    parameter_row_start("Byte19-20", "Heartbeat interval (ms)");
     input_u16("##gfsk-heartbeat", config.heartbeat_interval);
-    table_row_end("200-10000");
-    table_row_start("Byte21", "Heartbeat loss threshold");
+    parameter_row_end("200-10000");
+    parameter_row_start("Byte21", "Heartbeat loss threshold");
     input_u8("##gfsk-loss", config.heartbeat_loss);
-    table_row_end("1-255 packets");
-    table_row_start("Byte22", "Receive bandwidth");
+    parameter_row_end("1-255 packets");
+    parameter_row_start("Byte22", "Receive bandwidth");
     input_u8("##gfsk-bandwidth", config.bandwidth);
-    table_row_end("0=117.3, 1=234.3, 2=467 kHz");
-    table_row_start("Byte23-26", "Bit rate (bps)");
+    parameter_row_end("0=117.3, 1=234.3, 2=467 kHz");
+    parameter_row_start("Byte23-26", "Bit rate (bps)");
     input_u32("##gfsk-rate", config.bitrate);
-    table_row_end("600-150000");
-    table_row_start("Byte27-30", "Frequency deviation (Hz)");
+    parameter_row_end("600-150000");
+    parameter_row_start("Byte27-30", "Frequency deviation (Hz)");
     input_u32("##gfsk-deviation", config.frequency_deviation);
-    table_row_end("600-300000; 2*deviation/rate >= 0.5");
-    table_row_start("Byte31", "Pulse shaping");
+    parameter_row_end("600-300000; 2*deviation/rate >= 0.5");
+    parameter_row_start("Byte31", "Pulse shaping");
     input_u8("##gfsk-pulse", config.pulse_shaping);
-    table_row_end("0x00, 0x08-0x0B");
-    table_row_start("Byte32", "Preamble length (bit)");
+    parameter_row_end("0x00, 0x08-0x0B");
+    parameter_row_start("Byte32", "Preamble length (bit)");
     input_u8("##gfsk-preamble", config.preamble_length);
-    table_row_end("16-255");
-    table_row_start("Byte33-34", "Sync word");
+    parameter_row_end("16-255");
+    parameter_row_start("Byte33-34", "Sync word");
     input_u16("##gfsk-sync", config.sync_word);
-    table_row_end("16-bit value");
-    fixed_row("Byte35-38", "Reserved", preview, 35, 4, "fixed 0");
-    fixed_row("Byte39", "Result code", preview, 39, 1, "fixed 0");
-    fixed_row("Byte40-41", "CRC16-XMODEM", preview, 40, 2, "calculated automatically");
+    parameter_row_end("16-bit value");
+    frame.config = config;
+    const Bytes encoded = frame.to_bytes();
+    fixed_parameter_row("Byte35-38", "Reserved", encoded, 35, 4, "fixed 0");
+    fixed_parameter_row("Byte39", "Result code", encoded, 39, 1, "fixed 0");
+    fixed_parameter_row("Byte40-41", "CRC16-XMODEM", encoded, 40, 2, "calculated automatically");
 }
 template <typename DrawRows>
 void parameter_table(const char* id, DrawRows&& draw_rows) {
@@ -328,10 +366,10 @@ void parameter_table(const char* id, DrawRows&& draw_rows) {
                 ImGuiTableFlags_Resizable,
             ImVec2(0, -48)))
         return;
-    ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, 88);
-    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 190);
+    ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, 88.0F);
+    ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 190.0F);
     ImGui::TableSetupColumn("Value / control", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("Protocol rule", ImGuiTableColumnFlags_WidthFixed, 250);
+    ImGui::TableSetupColumn("Protocol rule", ImGuiTableColumnFlags_WidthFixed, 250.0F);
     ImGui::TableHeadersRow();
     draw_rows();
     ImGui::EndTable();
@@ -352,7 +390,7 @@ void parameter_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
         gfsk = snapshot.device.gfsk;
     }
     ImGui::TextDisabled(
-        "Complete 42-byte configuration write-frame preview. Only device parameters are editable.");
+        "Radio configuration fields. Manage non-radio SDO objects on the SDO page.");
     if (ImGui::BeginTabBar("parameter_tabs")) {
         if (ImGui::BeginTabItem("LoRa")) {
             parameter_table("lora_frame", [&] { lora_rows(lora); });
@@ -477,12 +515,13 @@ SdoEditorState sdo_editor_state_from(const SdoDraft& draft) {
 void sdo_text_input(const char* index, const char* name, std::array<char, 41>& value) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
-    ImGui::TextDisabled("%s", index);
+    ImGui::TextUnformatted(index);
     ImGui::TableSetColumnIndex(1);
     ImGui::TextUnformatted(name);
     ImGui::TableSetColumnIndex(2);
     ImGui::SetNextItemWidth(-1.0F);
     ImGui::InputText((std::string("##") + index).c_str(), value.data(), value.size());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", value.data());
     ImGui::TableSetColumnIndex(3);
     ImGui::TextDisabled("ASCII, max 40 bytes");
 }
@@ -503,39 +542,65 @@ void sdo_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
     ImGui::TextDisabled(
         "Internal firmware-state editor. Serial SDO access permissions remain unchanged.");
     if (ImGui::BeginTable(
-            "sdo_table", 4,
-            ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                ImGuiTableFlags_Resizable,
+            "sdo_table", 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY,
             ImVec2(0, -48))) {
-        ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 100);
-        ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthFixed, 220);
+        ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 112.0F);
+        ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthFixed, 230.0F);
         ImGui::TableSetupColumn("Simulator value", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Access / rule", ImGuiTableColumnFlags_WidthFixed, 185);
+        ImGui::TableSetupColumn("Access / rule", ImGuiTableColumnFlags_WidthFixed, 250.0F);
         ImGui::TableHeadersRow();
-        table_row_start("0x001", "Product code");
-        input_u32("##product", draft.identity.product_code, true);
-        table_row_end("serial: RO; GUI: editable");
-        table_row_start("0x002", "Version number");
-        input_u32("##version", draft.identity.version_number, true);
-        table_row_end("serial: RO; GUI: editable");
-        table_row_start("0x003", "Serial number");
-        input_u32("##serial", draft.identity.serial_number, true);
-        table_row_end("serial: RO; GUI: editable");
-        fixed_row("0x004-0x007", "Identity reserved", Bytes{}, 0, 4, "fixed 0");
+        auto sdo_number = [](const char* index, const char* object, std::uint32_t& value,
+                             const char* rule) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(index);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(object);
+            ImGui::TableSetColumnIndex(2);
+            input_u32((std::string("##") + index).c_str(), value);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextDisabled("%s", rule);
+        };
+        auto sdo_readonly = [](const char* index, const char* object, const char* value,
+                               const char* rule) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(index);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(object);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%s", value);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextDisabled("%s", rule);
+        };
+        sdo_number(
+            "0X001", "Product code", draft.identity.product_code, "serial: RO; GUI: editable");
+        sdo_number(
+            "0X002", "Version number", draft.identity.version_number, "serial: RO; GUI: editable");
+        sdo_number(
+            "0X003", "Serial number", draft.identity.serial_number, "serial: RO; GUI: editable");
+        sdo_readonly("0X004-0X007", "Identity reserved", "0X00000000", "fixed 0");
         sdo_text_input("0x008-0x011", "App firmware version", draft.app_version);
         sdo_text_input("0x012-0x01B", "Bootloader firmware version", draft.boot_version);
         sdo_text_input("0x01C-0x025", "App branch name", draft.app_branch);
         sdo_text_input("0x026-0x02F", "App tag SHA1 ID", draft.app_tag);
         sdo_text_input("0x030-0x039", "Boot branch name", draft.boot_branch);
         sdo_text_input("0x03A-0x043", "Boot tag SHA1 ID", draft.boot_tag);
-        fixed_row("0x044-0x0FF", "Reserved", Bytes{}, 0, 4, "fixed 0");
-        table_row_start("0x102", "Battery (%)");
-        ImGui::SetNextItemWidth(-1.0F);
-        ImGui::SliderInt("##battery", &draft.battery, 0, 100);
-        table_row_end("serial: RO; GUI: editable");
-        table_row_start("0x202", "Upgrade request");
-        input_u32("##upgrade", draft.upgrade_request, true);
-        table_row_end("serial write accepts 0x0000454E only");
+        sdo_readonly("0X044-0X0FF", "Reserved", "0X00000000", "fixed 0");
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted("0X102");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted("Battery");
+        ImGui::TableSetColumnIndex(2);
+        auto battery = static_cast<std::uint8_t>(std::clamp(draft.battery, 0, 100));
+        input_u8("##battery", battery);
+        draft.battery = battery;
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextDisabled("serial: RO; GUI: editable");
+        sdo_number(
+            "0X202", "Upgrade request", draft.upgrade_request,
+            "serial write accepts 0X0000454E only");
         ImGui::EndTable();
     }
     if (ImGui::Button("Apply SDO state")) {
@@ -552,34 +617,54 @@ void sdo_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
 }
 
 void protocol_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
+    static std::optional<std::size_t> selected_record{};
+    if (snapshot.history.empty())
+        selected_record.reset();
+    else if (!selected_record || *selected_record >= snapshot.history.size())
+        selected_record = snapshot.history.size() - 1;
+
     ImGui::TextColored(k_accent, "PROTOCOL HISTORY");
     ImGui::SameLine();
     ImGui::TextDisabled("%zu records", snapshot.history.size());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear history")) (void)simulator.clear_history();
+    if (ImGui::SmallButton("Clear history")) {
+        selected_record.reset();
+        (void)simulator.clear_history();
+    }
     if (ImGui::BeginTable(
-            "history", 7,
-            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY,
-            ImVec2(0, -130))) {
-        for (const char* name : {"Dir", "Cmd", "TxID", "Object", "Result", "CRC", "Note"})
-            ImGui::TableSetupColumn(name);
+            "history", 7, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY,
+            ImVec2(0, -190))) {
+        ImGui::TableSetupColumn("Dir", ImGuiTableColumnFlags_WidthFixed, 65);
+        ImGui::TableSetupColumn("Cmd", ImGuiTableColumnFlags_WidthFixed, 78);
+        ImGui::TableSetupColumn("TxID", ImGuiTableColumnFlags_WidthFixed, 115);
+        ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthFixed, 112);
+        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthFixed, 100);
+        ImGui::TableSetupColumn("CRC", ImGuiTableColumnFlags_WidthFixed, 95);
+        ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
-        for (const auto& record : snapshot.history) {
+        for (std::size_t index = 0; index < snapshot.history.size(); ++index) {
+            const auto& record = snapshot.history[index];
             const auto& frame = record.frame;
             ImGui::TableNextRow();
-            ImGui::TableNextColumn();
+            ImGui::TableSetColumnIndex(0);
+            const bool selected = selected_record && *selected_record == index;
+            if (ImGui::Selectable(
+                    (std::string("##history-record-") + std::to_string(index)).c_str(), selected,
+                    ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
+                selected_record = index;
+            ImGui::SameLine();
             const ImVec4 color = record.direction == FrameDirection::Received      ? k_accent
                                  : record.direction == FrameDirection::Transmitted ? k_good
                                                                                    : k_warn;
             ImGui::TextColored(color, "%s", direction_name(record.direction));
             ImGui::TableNextColumn();
-            ImGui::Text("0x%02X", frame[0]);
+            ImGui::Text("0X%02X", frame[0]);
             ImGui::TableNextColumn();
             ImGui::Text("%u", frame.read_le32(1));
             ImGui::TableNextColumn();
-            ImGui::Text("0x%04X", frame.read_le16(5));
+            ImGui::Text("0X%04X", frame.read_le16(5));
             ImGui::TableNextColumn();
-            ImGui::Text("0x%02X", frame[39]);
+            ImGui::Text("0X%02X", frame[39]);
             ImGui::TableNextColumn();
             ImGui::Text("%s", frame.has_valid_crc() ? "valid" : "bad");
             ImGui::TableNextColumn();
@@ -587,15 +672,23 @@ void protocol_page(Simulator& simulator, const SimulatorSnapshot& snapshot) {
         }
         ImGui::EndTable();
     }
-    ImGui::SeparatorText("Latest raw frame");
+    ImGui::SeparatorText("Selected frame record");
     if (snapshot.history.empty()) {
         ImGui::TextDisabled("No frames recorded. Connect a Host client to inspect traffic.");
         return;
     }
-    const auto& frame = snapshot.history.back().frame;
-    for (std::size_t i = 0; i < frame.size(); ++i) {
-        ImGui::Text("%02X", frame[i]);
-        if ((i + 1) % 14 != 0 && i + 1 != frame.size()) ImGui::SameLine();
+    const auto& record = snapshot.history[*selected_record];
+    const auto& frame = record.frame;
+    ImGui::Text(
+        "%s  |  Cmd 0X%02X  |  TxID %u  |  Object 0X%04X  |  Result 0X%02X  |  CRC %s",
+        direction_name(record.direction), frame[0], frame.read_le32(1), frame.read_le16(5),
+        frame[39], frame.has_valid_crc() ? "valid" : "bad");
+    if (!record.note.empty()) ImGui::TextDisabled("Note: %s", record.note.c_str());
+    const auto raw_frame = hex_bytes(frame, 0, frame.size());
+    if (ImGui::SmallButton("Copy complete hex frame")) ImGui::SetClipboardText(raw_frame.c_str());
+    for (std::size_t offset = 0; offset < frame.size(); offset += 16) {
+        const auto count = std::min<std::size_t>(16, frame.size() - offset);
+        ImGui::Text("%02zu: %s", offset, hex_bytes(frame, offset, count).c_str());
     }
 }
 void faults_page(Simulator& simulator) {

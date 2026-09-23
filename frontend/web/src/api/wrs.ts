@@ -40,6 +40,12 @@ export interface GfskParameters {
   preamble_len: number;
   sync_word: number;
 }
+export interface SdoResponse {
+  object_address: number;
+  object_data: number;
+  status: number;
+  result_code: number;
+}
 export interface Operation {
   operation_id: string;
   state: 'pending' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'unknown';
@@ -50,6 +56,11 @@ export interface Operation {
 export interface DiagnosticError {
   code: string | null;
   detail: string | null;
+}
+export interface Snapshot {
+  transmitter: { connection: Connection };
+  receiver: { connection: Connection };
+  active_operation: Operation | null;
 }
 
 export const api = {
@@ -67,6 +78,14 @@ export const api = {
   readPin: () => request<{ pin: string }>('/transmitter/pin'),
   writePin: (pin: string) =>
     request<void>('/transmitter/pin', { method: 'PUT', body: JSON.stringify({ pin }) }),
+  readTransmitterSdo: (object_address: number) =>
+    request<SdoResponse>('/transmitter/sdo/read', {
+      method: 'POST', body: JSON.stringify({ object_address }),
+    }),
+  writeTransmitterSdo: (object_address: number, object_data: number) =>
+    request<SdoResponse>('/transmitter/sdo', {
+      method: 'PUT', body: JSON.stringify({ object_address, object_data }),
+    }),
   transmitterLora: () => request<LoRaParameters>('/transmitter/lora-parameters'),
   writeTransmitterLora: (body: LoRaParameters) =>
     request<void>('/transmitter/lora-parameters', { method: 'PUT', body: JSON.stringify(body) }),
@@ -112,4 +131,5 @@ export const api = {
   factoryBind: () =>
     request<{ operation_id: string }>('/receiver/factory-bind', { method: 'POST' }),
   operation: (id: string) => request<Operation>(`/operations/${id}`),
+  snapshot: () => request<Snapshot>('/snapshot'),
 };

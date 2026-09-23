@@ -11,11 +11,19 @@ from pydantic import ValidationError
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.mock import MockWrsGateway
 from wrs_debugger.main import create_app
+from wrs_debugger.models.connection import (
+    ConnectionState,
+    ReceiverConnection,
+    TransmitterConnection,
+)
 from wrs_debugger.models.device import SerialPortInfo
 from wrs_debugger.models.diagnostic import DiagnosticError
 from wrs_debugger.models.event import EventName
 from wrs_debugger.models.gfsk import GfskParameters
 from wrs_debugger.models.lora import LoRaParameters
+from wrs_debugger.services.native_executor import InlineMockExecutor
+from wrs_debugger.services.runtime import Runtime
+from wrs_debugger.services.transmitter import TransmitterService
 from wrs_debugger.settings import SettingsRepository
 from wrs_debugger.websocket.hub import WebSocketHub
 
@@ -53,7 +61,10 @@ GFSK_ZERO_VALUES = {
 
 @asynccontextmanager
 async def api_client(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, object]]:
-    app = create_app(settings_repository=SettingsRepository(tmp_path / "settings.json"))
+    app = create_app(
+        gateway_factory=MockWrsGateway,
+        settings_repository=SettingsRepository(tmp_path / "settings.json"),
+    )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -77,10 +88,24 @@ async def connect_both(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_transmitter_info_refresh_returns_device_id(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, _):
+        await client.post("/api/v1/transmitter/connect", json={"device": "/dev/ttyACM0"})
+        assert (await client.get("/api/v1/transmitter")).json() == {
+            "device_id": "A1B2C3",
+            "product_code": 1001,
+            "version_number": 1,
+            "serial_number": 42,
+        }
+
+
+@pytest.mark.asyncio
 async def test_system_contract_and_openapi_problem_details(tmp_path: Path) -> None:
     async with api_client(tmp_path) as (client, _):
         health = (await client.get("/api/v1/health")).json()
-        assert health == {"status": "ok", "ready": True, "phase": "ready_for_control"}
+        assert health["status"] == "ok"
+        assert health["ready"] is True
+        assert health["phase"] == "ready_for_control"
         electron_health = await client.get("/api/v1/health", headers={"Origin": "null"})
         assert electron_health.headers["access-control-allow-origin"] == "null"
         vite_health = await client.get(
@@ -240,6 +265,41 @@ async def test_native_disconnect_error_updates_connection_state(tmp_path: Path) 
         connection = (await client.get("/api/v1/transmitter/connection")).json()
         assert connection["state"] == "disconnected"
         assert connection["error"]["code"] == "TRANSMITTER_DISCONNECTED"
+
+
+@pytest.mark.asyncio
+async def test_idle_connection_monitor_detects_transmitter_loss() -> None:
+    events: list[tuple[EventName, object]] = []
+
+    async def publish(event: EventName, data: object) -> None:
+        events.append((event, data))
+
+    gateway = MockWrsGateway()
+    runtime = Runtime(
+        gateway=gateway,
+        publish=publish,
+        transmitter_connection=TransmitterConnection(
+            state=ConnectionState.connected, device="/dev/ttyACM0"
+        ),
+        receiver_connection=ReceiverConnection(state=ConnectionState.disconnected),
+        executor=InlineMockExecutor(),
+    )
+
+    def disconnected() -> None:
+        raise ApplicationError(
+            "TRANSMITTER_DISCONNECTED",
+            503,
+            "Transmitter disconnected",
+            "The transmitter disconnected while idle.",
+    )
+
+    gateway.probe_transmitter = disconnected  # type: ignore[method-assign]
+    with pytest.raises(ApplicationError, match="TRANSMITTER_DISCONNECTED"):
+        await TransmitterService(runtime).probe_connection()
+    assert runtime.transmitter_connection.state == ConnectionState.disconnected
+    assert runtime.transmitter_connection.error is not None
+    assert runtime.transmitter_connection.error.code == "TRANSMITTER_DISCONNECTED"
+    assert events[-1][0] == EventName.transmitter_connection_changed
 
 
 @pytest.mark.asyncio

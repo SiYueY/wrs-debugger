@@ -9,7 +9,7 @@ from wrs_debugger.models.connection import (
     ReceiverSettings,
     TransmitterConnection,
 )
-from wrs_debugger.models.device import ReceiverInfo, SerialPortInfo, TransmitterInfo
+from wrs_debugger.models.device import ReceiverInfo, SdoResponse, SerialPortInfo, TransmitterInfo
 from wrs_debugger.models.diagnostic import DiagnosticError
 from wrs_debugger.models.gfsk import GfskParameters
 from wrs_debugger.models.lora import LoRaParameters
@@ -67,6 +67,9 @@ class MockWrsGateway:
         )
     )
     transmitter_pin: str = "123456"
+    transmitter_sdo: dict[int, int] = field(
+        default_factory=lambda: {0x001: 1001, 0x002: 1, 0x003: 42, 0x102: 100, 0x202: 0}
+    )
     diagnostic_error: DiagnosticError = field(default_factory=DiagnosticError)
     transmitter_lora_parameters: LoRaParameters = field(default_factory=default_lora_parameters)
     transmitter_gfsk_parameters: GfskParameters = field(default_factory=default_gfsk_parameters)
@@ -116,6 +119,21 @@ class MockWrsGateway:
 
     def disconnect_transmitter(self) -> None:
         return
+
+    def probe_transmitter(self) -> None:
+        return
+
+    def read_transmitter_sdo(self, object_address: int) -> SdoResponse:
+        return SdoResponse(
+            object_address=object_address,
+            object_data=self.transmitter_sdo.get(object_address, 0),
+            status=0x4,
+            result_code=0,
+        )
+
+    def write_transmitter_sdo(self, object_address: int, object_data: int) -> SdoResponse:
+        self.transmitter_sdo[object_address] = object_data
+        return SdoResponse(object_address=object_address, object_data=0, status=0x6, result_code=0)
 
     def read_transmitter_info(self) -> TransmitterInfo:
         return self.transmitter_info.model_copy(deep=True)

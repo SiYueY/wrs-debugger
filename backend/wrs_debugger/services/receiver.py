@@ -168,9 +168,7 @@ class ReceiverService:
                 "Receiver must be connected for this operation.",
             )
 
-    async def _set_failed_connection(
-        self, domain_id: int | None, code: str, detail: str
-    ) -> None:
+    async def _set_failed_connection(self, domain_id: int | None, code: str, detail: str) -> None:
         self.runtime.set_receiver_connection(
             ReceiverConnection(
                 state=ConnectionState.failed,

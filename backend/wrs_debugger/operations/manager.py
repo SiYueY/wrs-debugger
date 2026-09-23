@@ -120,9 +120,7 @@ class OperationManager:
                     self._record_active(None)
             await self._publish_operation(operation)
 
-    async def _update(
-        self, operation: Operation, stage: OperationStage, progress: float
-    ) -> None:
+    async def _update(self, operation: Operation, stage: OperationStage, progress: float) -> None:
         operation.stage = stage
         operation.progress = progress
         operation.updated_at = datetime.now(UTC)

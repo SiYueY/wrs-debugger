@@ -43,6 +43,11 @@ const lora = ref<LoRaParameters>(defaultLoRaParameters());
 const gfsk = ref<GfskParameters>(defaultGfskParameters());
 const busy = ref(false);
 const message = ref('');
+const objectAddress = ref(0);
+const objectData = ref(0);
+const frameOperation = ref<'read' | 'write'>('read');
+const responseStatus = ref<number | null>(null);
+const resultCode = ref<number | null>(null);
 const ready = computed(() => store.transmitterConnected && !busy.value);
 const current = computed({
   get: () => (mode.value === 'lora' ? lora.value : gfsk.value),
@@ -85,24 +90,49 @@ async function run(action: () => Promise<void>) {
 }
 async function readParameters() {
   await run(async () => {
-    if (mode.value === 'lora') lora.value = await api.transmitterLora();
-    else gfsk.value = await api.transmitterGfsk();
+    frameOperation.value = 'read';
+    if (objectAddress.value !== 0) {
+      const response = await api.readTransmitterSdo(objectAddress.value);
+      objectData.value = response.object_data;
+      responseStatus.value = response.status;
+      resultCode.value = response.result_code;
+    } else {
+      if (mode.value === 'lora') lora.value = await api.transmitterLora();
+      else gfsk.value = await api.transmitterGfsk();
+      responseStatus.value = 0x4;
+      resultCode.value = 0;
+    }
   });
 }
 async function writeParameters() {
-  const validation = validate();
-  if (validation) return void (message.value = validation);
+  if (objectAddress.value === 0) {
+    const validation = validate();
+    if (validation) return void (message.value = validation);
+  }
   await run(async () => {
-    if (mode.value === 'lora') {
+    frameOperation.value = 'write';
+    if (objectAddress.value !== 0) {
+      const response = await api.writeTransmitterSdo(objectAddress.value, objectData.value);
+      responseStatus.value = response.status;
+      resultCode.value = response.result_code;
+    } else if (mode.value === 'lora') {
       await api.writeTransmitterLora(lora.value!);
       lora.value = await api.transmitterLora();
     } else {
       await api.writeTransmitterGfsk(gfsk.value!);
       gfsk.value = await api.transmitterGfsk();
     }
+    if (objectAddress.value === 0) {
+      responseStatus.value = 0x6;
+      resultCode.value = 0;
+    }
   });
 }
 async function restoreParameters() {
+  if (objectAddress.value !== 0) {
+    message.value = 'Restore defaults is available only for 0X000 (通信参数).';
+    return;
+  }
   await run(async () => {
     if (mode.value === 'lora') {
       await api.restoreTransmitterLora();
@@ -144,6 +174,11 @@ watch(
   },
   { immediate: true },
 );
+watch(objectAddress, (address) => {
+  if (address === 0) objectData.value = 0;
+  responseStatus.value = null;
+  resultCode.value = null;
+});
 </script>
 <template>
   <div class="view">
@@ -182,7 +217,16 @@ watch(
             <div class="panel-tag">{{ t('communicationParameters') }}</div>
           </div>
           <div class="parameter-content">
-            <TransmitterRadioParameters v-model="current" :kind="mode" :disabled="!ready" />
+            <TransmitterRadioParameters
+              v-model="current"
+              v-model:object-address="objectAddress"
+              v-model:object-data="objectData"
+              :kind="mode"
+              :disabled="!ready"
+              :operation="frameOperation"
+              :response-status="responseStatus"
+              :result-code="resultCode"
+            />
           </div>
           <div class="parameter-actions">
             <span :class="{ error: message && message !== t('operationSucceeded') }">{{
@@ -346,14 +390,6 @@ watch(
   color: #fff;
   font-size: 12px;
   line-height: 1.6;
-}
-.parameter-content :deep(.parameter-grid) {
-  align-content: start;
-  align-items: start;
-}
-.parameter-content :deep(.parameter-column) {
-  grid-template-rows: repeat(10, var(--field-height));
-  align-content: start;
 }
 .parameter-actions {
   display: flex;

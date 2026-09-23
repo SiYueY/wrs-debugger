@@ -39,12 +39,14 @@ enum class SystemCmd : std::uint8_t {
     FindReq = 0x03,        // 寻机请求。
     ParamReadReq = 0x04,   // 读取通信参数或 SDO 对象请求。
     ParamWriteReq = 0x05,  // 写入通信参数或 SDO 对象请求。
+    NormalReq = 0x06,      // 正常通信（运行状态）请求。
     PinCfgReq = 0x07,      // PIN 配置（ASCII "000000" 表示读取）请求。
     BindRsp = 0x81,        // 绑定响应。
     UnbindRsp = 0x82,      // 解绑响应。
     FindRsp = 0x83,        // 寻机响应。
     ParamReadRsp = 0x84,   // 通信参数或 SDO 对象读取响应。
     ParamWriteRsp = 0x85,  // 通信参数或 SDO 对象写入响应。
+    NormalRsp = 0x86,      // 正常通信（运行状态）响应。
     PinCfgRsp = 0x87,      // PIN 配置响应。
 };
 
@@ -221,6 +223,31 @@ struct DeviceKeyFrame final {
     [[nodiscard]] Bytes to_bytes() const noexcept;
     /** 原样反序列化；如需完整性校验，请先调用 has_valid_crc()。 */
     [[nodiscard]] static DeviceKeyFrame from_bytes(const Bytes&) noexcept;
+};
+
+/**
+ * @brief 正常通信运行状态帧。
+ *
+ * 查询请求除 cmd 外全部置零；响应的 Byte1–3 返回无线急停盒 Device ID。
+ * 该帧没有事务 ID，不与参数/SDO 帧共用字段语义。
+ */
+struct NormalFrame final {
+    std::uint8_t cmd{};                       // Byte0：NormalReq 或 NormalRsp。
+    std::array<std::uint8_t, 3> device_id{};  // Byte1–3：无线急停盒 Device ID。
+    std::uint32_t wireless_counter{};         // Byte4–7：最近无线动态计数器。
+    std::uint16_t receiver_status{};          // Byte8–9：接收板状态字。
+    std::uint8_t rssi{};                      // Byte10：RSSI 的负值。
+    std::int16_t snr{};                       // Byte11–12：SNR，系数 0.25 dB。
+    std::uint8_t control{};                   // Byte13：控制字。
+    std::uint16_t object_index{};             // Byte14–15：SDO 对象及状态。
+    std::uint32_t object_data{};              // Byte16–19：SDO 数据。
+    std::uint32_t warning_code{};             // Byte20–23：警告码。
+    std::uint32_t error_code{};               // Byte24–27：错误码。
+    std::array<std::uint8_t, 11> reserved{};  // Byte28–38：保留。
+    std::uint8_t result_code{};               // Byte39：ResultCode。
+    std::uint16_t crc16{};                    // Byte40–41：小端 CRC16-XMODEM。
+    [[nodiscard]] Bytes to_bytes() const noexcept;
+    [[nodiscard]] static NormalFrame from_bytes(const Bytes&) noexcept;
 };
 
 /**

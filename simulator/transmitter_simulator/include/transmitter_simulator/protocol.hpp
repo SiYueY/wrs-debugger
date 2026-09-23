@@ -47,9 +47,11 @@ static_assert(sizeof(Bytes) == kFrameSize, "Bytes must be exactly one wire frame
 enum class SystemCmd : std::uint8_t {
     ParamReadReq = 0x04,
     ParamWriteReq = 0x05,
+    NormalReq = 0x06,
     PinCfgReq = 0x07,
     ParamReadRsp = 0x84,
     ParamWriteRsp = 0x85,
+    NormalRsp = 0x86,
     PinCfgRsp = 0x87,
 };
 

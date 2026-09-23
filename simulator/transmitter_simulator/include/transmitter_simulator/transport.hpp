@@ -24,6 +24,8 @@ public:
 
     /** Creates one Linux PTY and atomically publishes its slave via stable_path. */
     [[nodiscard]] Result<void, Error> open(const TransportOptions& options);
+    /** Replaces the kernel PTY while retaining exclusive ownership of stable_path. */
+    [[nodiscard]] Result<void, Error> recreate();
     void disconnect() noexcept;
     void close() noexcept;
     [[nodiscard]] bool is_open() const noexcept;

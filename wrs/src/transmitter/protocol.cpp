@@ -241,6 +241,48 @@ DeviceKeyFrame DeviceKeyFrame::from_bytes(const Bytes& bytes) noexcept {
     return frame;
 }
 
+Bytes NormalFrame::to_bytes() const noexcept {
+    Bytes bytes{};
+    bytes[0] = cmd;
+    for (std::size_t index = 0; index < device_id.size(); ++index)
+        bytes[1 + index] = device_id[index];
+    write_le32(bytes.bytes() + 4, wireless_counter);
+    write_le16(bytes.bytes() + 8, receiver_status);
+    bytes[10] = rssi;
+    write_le16(bytes.bytes() + 11, static_cast<std::uint16_t>(snr));
+    bytes[13] = control;
+    write_le16(bytes.bytes() + 14, object_index);
+    write_le32(bytes.bytes() + 16, object_data);
+    write_le32(bytes.bytes() + 20, warning_code);
+    write_le32(bytes.bytes() + 24, error_code);
+    for (std::size_t index = 0; index < reserved.size(); ++index)
+        bytes[28 + index] = reserved[index];
+    bytes[kResultOffset] = result_code;
+    fill_crc(bytes);
+    return bytes;
+}
+
+NormalFrame NormalFrame::from_bytes(const Bytes& bytes) noexcept {
+    NormalFrame frame{};
+    frame.cmd = bytes[0];
+    for (std::size_t index = 0; index < frame.device_id.size(); ++index)
+        frame.device_id[index] = bytes[1 + index];
+    frame.wireless_counter = read_le32(bytes.bytes() + 4);
+    frame.receiver_status = read_le16(bytes.bytes() + 8);
+    frame.rssi = bytes[10];
+    frame.snr = static_cast<std::int16_t>(read_le16(bytes.bytes() + 11));
+    frame.control = bytes[13];
+    frame.object_index = read_le16(bytes.bytes() + 14);
+    frame.object_data = read_le32(bytes.bytes() + 16);
+    frame.warning_code = read_le32(bytes.bytes() + 20);
+    frame.error_code = read_le32(bytes.bytes() + 24);
+    for (std::size_t index = 0; index < frame.reserved.size(); ++index)
+        frame.reserved[index] = bytes[28 + index];
+    frame.result_code = bytes[kResultOffset];
+    frame.crc16 = read_le16(bytes.bytes() + kFrameBodySize);
+    return frame;
+}
+
 Bytes SdoFrame::to_bytes() const noexcept {
     Bytes bytes{};
     bytes[0] = cmd;

@@ -7,6 +7,7 @@ import {
   type Operation,
   type SerialPort,
 } from '../api/wrs';
+import { runtimeConfig } from '../runtime';
 
 const disconnected = (): Connection => ({ state: 'disconnected' });
 export const useDebuggerStore = defineStore('debugger', {
@@ -30,18 +31,21 @@ export const useDebuggerStore = defineStore('debugger', {
     async bootstrap() {
       this.loading = true;
       try {
-        const [settings, ports, transmitter, receiver, diagnostic] = await Promise.all([
+        const [settings, ports, transmitter, receiver] = await Promise.all([
           api.receiverSettings(),
           api.transmitterPorts(),
           api.transmitterConnection(),
           api.receiverConnection(),
-          api.diagnosticError(),
         ]);
         this.domainId = settings.domain_id;
         this.ports = ports.ports;
         this.transmitter = transmitter;
         this.receiver = receiver;
-        this.diagnostic = diagnostic;
+        try {
+          this.diagnostic = await api.diagnosticError();
+        } catch {
+          this.diagnostic = { code: null, detail: null };
+        }
         this.selectedPort = transmitter.device ?? ports.ports[0]?.device ?? '';
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Request failed';
@@ -100,13 +104,53 @@ export const useDebuggerStore = defineStore('debugger', {
       this.loading = true;
       try {
         this.transmitter = await api.disconnectTransmitter();
+        this.selectedPort = '';
       } finally {
         this.loading = false;
       }
     },
+    async syncSnapshot() {
+      const snapshot = await api.snapshot();
+      this.transmitter = snapshot.transmitter.connection;
+      this.receiver = snapshot.receiver.connection;
+      this.operation = snapshot.active_operation;
+    },
+    startEvents() {
+      let retryMs = 500;
+      let stopped = false;
+      let socket: WebSocket | undefined;
+      const connect = () => {
+        if (stopped) return;
+        socket = new WebSocket(runtimeConfig.apiBase.replace('http', 'ws') + '/api/v1/events');
+        socket.onopen = () => {
+          retryMs = 500;
+          void this.syncSnapshot();
+        };
+        socket.onmessage = (message) => {
+          const event = JSON.parse(message.data) as { event: string; data: Connection | Operation };
+          if (event.event === 'transmitter.connection.changed')
+            this.transmitter = event.data as Connection;
+          if (event.event === 'receiver.connection.changed')
+            this.receiver = event.data as Connection;
+          if (event.event === 'operation.updated') this.operation = event.data as Operation;
+        };
+        socket.onclose = () => {
+          if (stopped) return;
+          window.setTimeout(connect, retryMs);
+          retryMs = Math.min(retryMs * 2, 10_000);
+        };
+      };
+      connect();
+      return () => {
+        stopped = true;
+        socket?.close();
+      };
+    },
     async trackOperation(operationId: string) {
       this.operation = await api.operation(operationId);
+      const deadline = Date.now() + 60_000;
       while (this.operation.state === 'pending' || this.operation.state === 'running') {
+        if (Date.now() >= deadline) throw new Error('Operation timed out');
         await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
         this.operation = await api.operation(operationId);
       }

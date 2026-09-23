@@ -5,6 +5,9 @@ from wrs_debugger.api.errors import PROBLEM_RESPONSES
 from wrs_debugger.models.connection import ConnectTransmitterRequest, TransmitterConnection
 from wrs_debugger.models.device import (
     PinResponse,
+    SdoReadRequest,
+    SdoResponse,
+    SdoWriteRequest,
     SerialPortListResponse,
     TransmitterInfo,
     WritePinRequest,
@@ -59,6 +62,20 @@ async def disconnect(
 @router.get("", response_model=TransmitterInfo, operation_id="get_transmitter_info")
 async def get_info(service: TransmitterService = Depends(transmitter_service)) -> TransmitterInfo:
     return await service.info()
+
+
+@router.post("/sdo/read", response_model=SdoResponse, operation_id="read_transmitter_sdo")
+async def read_sdo(
+    body: SdoReadRequest, service: TransmitterService = Depends(transmitter_service)
+) -> SdoResponse:
+    return await service.read_sdo(body.object_address)
+
+
+@router.put("/sdo", response_model=SdoResponse, operation_id="write_transmitter_sdo")
+async def write_sdo(
+    body: SdoWriteRequest, service: TransmitterService = Depends(transmitter_service)
+) -> SdoResponse:
+    return await service.write_sdo(body.object_address, body.object_data)
 
 
 @router.get("/pin", response_model=PinResponse, operation_id="read_transmitter_pin")

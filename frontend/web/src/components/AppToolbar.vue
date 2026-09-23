@@ -5,8 +5,7 @@ import { t } from '../i18n';
 import { useDebuggerStore } from '../stores/debugger';
 import SettingsDialog from './SettingsDialog.vue';
 const store = useDebuggerStore();
-const { diagnostic, domainId, ports, selectedPort, transmitter, receiver, loading } =
-  storeToRefs(store);
+const { diagnostic, domainId, ports, selectedPort, receiver, loading } = storeToRefs(store);
 const settingsOpen = ref(false);
 const labels = computed(() => ({
   disconnected: t('disconnected'),
@@ -21,6 +20,11 @@ const diagnosticLabel = computed(() => {
     ? `${diagnostic.value.code}: ${diagnostic.value.detail}`
     : diagnostic.value.code!;
 });
+async function selectTransmitterPort(event: Event) {
+  const device = (event.target as HTMLSelectElement).value;
+  if (device === '__disconnect__') await store.disconnectTransmitter();
+  else await store.selectPort(device);
+}
 </script>
 <template>
   <header class="toolbar">
@@ -56,23 +60,19 @@ const diagnosticLabel = computed(() => {
         {{ t('usb') }}
         <select
           :value="selectedPort"
+          class="transmitter-select"
+          :class="{ 'transmitter-connected': store.transmitterConnected }"
           :disabled="loading"
-          @change="store.selectPort(($event.target as HTMLSelectElement).value)"
+          @change="selectTransmitterPort"
         >
+          <option v-if="store.transmitterConnected" value="__disconnect__">
+            {{ t('disconnect') }}
+          </option>
           <option v-for="port in ports" :key="port.device" :value="port.device">
             {{ port.device }}
           </option>
         </select>
       </label>
-      <span class="status" :class="transmitter.state">{{ labels[transmitter.state] }}</span>
-      <button
-        v-if="store.transmitterConnected"
-        class="dbg-btn"
-        :disabled="loading"
-        @click="store.disconnectTransmitter"
-      >
-        {{ t('disconnect') }}
-      </button>
     </div>
     <div class="toolbar-spacer"></div>
     <div class="group diagnostic-group">
@@ -139,6 +139,11 @@ select {
 }
 .connecting {
   color: #2166b5;
+}
+.transmitter-select.transmitter-connected {
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  font-weight: 700;
 }
 .diagnostic {
   display: flex;

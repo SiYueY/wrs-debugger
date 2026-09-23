@@ -108,6 +108,43 @@ Result<void, Error> PtyTransport::open(const TransportOptions& options) {
     return Result<void, Error>::success();
 }
 
+Result<void, Error> PtyTransport::recreate() {
+    if (!is_open() || stable_path_.empty() || lock_fd_ < 0)
+        return Result<void, Error>::failure(Error::InvalidState);
+
+    // Keep the old master open while allocating the replacement. This prevents devpts
+    // from immediately reusing its number and makes stable-path publication atomic.
+    int replacement_master = -1;
+    int replacement_slave = -1;
+    char replacement_name[256]{};
+    if (::openpty(&replacement_master, &replacement_slave, replacement_name, nullptr, nullptr) != 0)
+        return Result<void, Error>::failure(io_error());
+    const auto flags = ::fcntl(replacement_master, F_GETFL);
+    if (flags < 0 || ::fcntl(replacement_master, F_SETFL, flags | O_NONBLOCK) != 0) {
+        (void)::close(replacement_slave);
+        (void)::close(replacement_master);
+        return Result<void, Error>::failure(io_error());
+    }
+    (void)::close(replacement_slave);
+
+    const auto nonce =
+        static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^
+        temporary_counter.fetch_add(1, std::memory_order_relaxed);
+    const auto temporary =
+        stable_path_ + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(nonce);
+    if (::symlink(replacement_name, temporary.c_str()) != 0 ||
+        ::rename(temporary.c_str(), stable_path_.c_str()) != 0) {
+        (void)::unlink(temporary.c_str());
+        (void)::close(replacement_master);
+        return Result<void, Error>::failure(Error::Io);
+    }
+
+    (void)::close(master_fd_);
+    master_fd_ = replacement_master;
+    slave_path_ = replacement_name;
+    return Result<void, Error>::success();
+}
+
 void PtyTransport::disconnect() noexcept {
     if (!stable_path_.empty()) {
         char target[256]{};

@@ -13,8 +13,7 @@ from wrs_debugger.models.error import ProblemDetails, ValidationViolation
 logger = logging.getLogger(__name__)
 
 PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
-    status: {"model": ProblemDetails}
-    for status in (400, 404, 409, 422, 500, 502, 503, 504)
+    status: {"model": ProblemDetails} for status in (400, 404, 409, 422, 500, 502, 503, 504)
 }
 
 

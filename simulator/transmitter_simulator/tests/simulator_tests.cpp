@@ -180,6 +180,29 @@ TEST_CASE("transport path switches atomically through the runtime control queue"
     REQUIRE_FALSE(std::filesystem::exists(replacement));
 }
 
+TEST_CASE("recreating a PTY republishes the configured stable path") {
+    Simulator simulator;
+    SimulatorOptions options{};
+    options.transport.stable_path = temporary_link();
+    std::filesystem::create_directories(
+        std::filesystem::path(options.transport.stable_path).parent_path());
+    REQUIRE(simulator.start(options));
+    const auto before = simulator.snapshot();
+
+    REQUIRE(simulator.recreate_pty());
+    const auto after = simulator.snapshot();
+    REQUIRE(after.lifecycle == LifecycleState::Running);
+    REQUIRE(after.stable_path == before.stable_path);
+    REQUIRE_FALSE(after.slave_path.empty());
+    REQUIRE(after.slave_path != before.slave_path);
+    REQUIRE(std::filesystem::is_symlink(after.stable_path));
+
+    const int fd = open_raw_slave(after.stable_path);
+    REQUIRE(fd >= 0);
+    ::close(fd);
+    simulator.stop();
+}
+
 TEST_CASE("Host peer close does not simulate a device disconnect") {
     Simulator simulator;
     SimulatorOptions options{};
