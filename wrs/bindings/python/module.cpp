@@ -7,6 +7,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <receiver/client.hpp>
 #include <serial/tool.hpp>
 #include <transmitter/client.hpp>
 
@@ -23,6 +24,17 @@ T unwrap(hardware::Result<T, transmitter::Error>&& result) {
     return std::move(result.value());
 }
 void unwrap(hardware::Result<void, transmitter::Error>&& result) {
+    if (!result) fail(result.error());
+}
+[[noreturn]] void fail(receiver::Error error) {
+    throw std::runtime_error("RECEIVER_" + std::to_string(static_cast<unsigned int>(error)));
+}
+template <typename T>
+T unwrap(hardware::Result<T, receiver::Error>&& result) {
+    if (!result) fail(result.error());
+    return std::move(result.value());
+}
+void unwrap(hardware::Result<void, receiver::Error>&& result) {
     if (!result) fail(result.error());
 }
 std::string device_id_out(const std::array<std::uint8_t, 3>& value) {
@@ -88,6 +100,62 @@ transmitter::GfskParamFrame gfsk_in(const py::dict& d) {
     v.sync_word = d["sync_word"].cast<std::uint16_t>();
     return v;
 }
+py::dict receiver_lora_out(const receiver::LoRaParameters& value) {
+    return py::dict(
+        "param_flags"_a = value.param_flags, "tx_power"_a = value.tx_power,
+        "freq_offset"_a = value.freq_offset, "payload_len"_a = value.payload_len,
+        "rssi_threshold"_a = value.rssi_threshold,
+        "heartbeat_interval"_a = value.heartbeat_interval,
+        "heartbeat_loss"_a = value.heartbeat_loss, "bandwidth"_a = value.bandwidth,
+        "spreading_factor"_a = value.spreading_factor, "coding_rate"_a = value.coding_rate,
+        "header_type"_a = value.header_type, "preamble_len"_a = value.preamble_len,
+        "sync_word"_a = value.sync_word);
+}
+receiver::LoRaParameters receiver_lora_in(const py::dict& d) {
+    receiver::LoRaParameters value{};
+    value.param_flags = d["param_flags"].cast<std::uint16_t>();
+    value.tx_power = d["tx_power"].cast<std::int16_t>();
+    value.freq_offset = d["freq_offset"].cast<std::uint16_t>();
+    value.payload_len = d["payload_len"].cast<std::uint8_t>();
+    value.rssi_threshold = d["rssi_threshold"].cast<std::uint8_t>();
+    value.heartbeat_interval = d["heartbeat_interval"].cast<std::uint16_t>();
+    value.heartbeat_loss = d["heartbeat_loss"].cast<std::uint8_t>();
+    value.bandwidth = d["bandwidth"].cast<std::uint8_t>();
+    value.spreading_factor = d["spreading_factor"].cast<std::uint8_t>();
+    value.coding_rate = d["coding_rate"].cast<std::uint8_t>();
+    value.header_type = d["header_type"].cast<std::uint8_t>();
+    value.preamble_len = d["preamble_len"].cast<std::uint8_t>();
+    value.sync_word = d["sync_word"].cast<std::uint16_t>();
+    return value;
+}
+py::dict receiver_gfsk_out(const receiver::GfskParameters& value) {
+    return py::dict(
+        "param_flags"_a = value.param_flags, "tx_power"_a = value.tx_power,
+        "freq_offset"_a = value.freq_offset, "payload_len"_a = value.payload_len,
+        "rssi_threshold"_a = value.rssi_threshold,
+        "heartbeat_interval"_a = value.heartbeat_interval,
+        "heartbeat_loss"_a = value.heartbeat_loss, "bandwidth"_a = value.bandwidth,
+        "bitrate"_a = value.bitrate, "freq_deviation"_a = value.freq_deviation,
+        "pulse_shaping"_a = value.pulse_shaping, "preamble_len"_a = value.preamble_len,
+        "sync_word"_a = value.sync_word);
+}
+receiver::GfskParameters receiver_gfsk_in(const py::dict& d) {
+    receiver::GfskParameters value{};
+    value.param_flags = d["param_flags"].cast<std::uint16_t>();
+    value.tx_power = d["tx_power"].cast<std::int16_t>();
+    value.freq_offset = d["freq_offset"].cast<std::uint16_t>();
+    value.payload_len = d["payload_len"].cast<std::uint8_t>();
+    value.rssi_threshold = d["rssi_threshold"].cast<std::uint8_t>();
+    value.heartbeat_interval = d["heartbeat_interval"].cast<std::uint16_t>();
+    value.heartbeat_loss = d["heartbeat_loss"].cast<std::uint8_t>();
+    value.bandwidth = d["bandwidth"].cast<std::uint8_t>();
+    value.bitrate = d["bitrate"].cast<std::uint32_t>();
+    value.freq_deviation = d["freq_deviation"].cast<std::uint32_t>();
+    value.pulse_shaping = d["pulse_shaping"].cast<std::uint8_t>();
+    value.preamble_len = d["preamble_len"].cast<std::uint8_t>();
+    value.sync_word = d["sync_word"].cast<std::uint16_t>();
+    return value;
+}
 }  // namespace
 
 PYBIND11_MODULE(wrs_debugger_native, m) {
@@ -124,7 +192,11 @@ PYBIND11_MODULE(wrs_debugger_native, m) {
             })
         .def(
             "read_device_id",
-            [](transmitter::Client& c) { return device_id_out(unwrap(c.read_device_id())); })
+            [](transmitter::Client& c) -> py::object {
+                const auto value = unwrap(c.read_device_id());
+                if (value == std::array<std::uint8_t, 3>{}) return py::none();
+                return py::cast(device_id_out(value));
+            })
         .def(
             "read_pin",
             [](transmitter::Client& c) {
@@ -176,4 +248,56 @@ PYBIND11_MODULE(wrs_debugger_native, m) {
         .def("restore_gfsk", [](transmitter::Client& c) {
             unwrap(c.restore_default_parameters(transmitter::RadioType::GFSK));
         });
+    py::class_<receiver::Client>(m, "ReceiverClient")
+        .def(py::init<>())
+        .def(
+            "connect",
+            [](receiver::Client& c, std::uint16_t domain_id) { unwrap(c.connect(domain_id)); })
+        .def("disconnect", [](receiver::Client& c) { unwrap(c.disconnect()); })
+        .def(
+            "info",
+            [](receiver::Client& c) {
+                const auto value = unwrap(c.read_info());
+                const bool bound = value.bound_device_id[0] != 0 || value.bound_device_id[1] != 0 ||
+                                   value.bound_device_id[2] != 0;
+                return py::dict(
+                    "bound_device_id"_a =
+                        bound ? py::cast(device_id_out(value.bound_device_id)) : py::none());
+            })
+        .def(
+            "read_sdo",
+            [](receiver::Client& c, std::uint16_t address) {
+                const auto value = unwrap(c.read_sdo(address));
+                return py::dict(
+                    "object_address"_a = (value.object_index & 0x0fffU),
+                    "object_data"_a = value.object_data, "status"_a = (value.object_index >> 12U),
+                    "result_code"_a = value.result_code);
+            })
+        .def(
+            "write_sdo",
+            [](receiver::Client& c, std::uint16_t address, std::uint32_t data) {
+                const auto value = unwrap(c.write_sdo(address, data));
+                return py::dict(
+                    "object_address"_a = (value.object_index & 0x0fffU),
+                    "object_data"_a = value.object_data, "status"_a = (value.object_index >> 12U),
+                    "result_code"_a = value.result_code);
+            })
+        .def(
+            "read_lora",
+            [](receiver::Client& c) { return receiver_lora_out(unwrap(c.read_lora_parameters())); })
+        .def(
+            "write_lora",
+            [](receiver::Client& c, const py::dict& d) {
+                unwrap(c.write_lora_parameters(receiver_lora_in(d)));
+            })
+        .def("restore_lora", [](receiver::Client& c) { unwrap(c.restore_lora()); })
+        .def(
+            "read_gfsk",
+            [](receiver::Client& c) { return receiver_gfsk_out(unwrap(c.read_gfsk_parameters())); })
+        .def(
+            "write_gfsk",
+            [](receiver::Client& c, const py::dict& d) {
+                unwrap(c.write_gfsk_parameters(receiver_gfsk_in(d)));
+            })
+        .def("restore_gfsk", [](receiver::Client& c) { unwrap(c.restore_gfsk()); });
 }

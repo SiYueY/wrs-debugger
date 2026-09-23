@@ -70,6 +70,9 @@ class MockWrsGateway:
     transmitter_sdo: dict[int, int] = field(
         default_factory=lambda: {0x001: 1001, 0x002: 1, 0x003: 42, 0x102: 100, 0x202: 0}
     )
+    receiver_sdo: dict[int, int] = field(
+        default_factory=lambda: {0x001: 2001, 0x002: 1, 0x003: 84, 0x201: 7, 0x202: 0}
+    )
     diagnostic_error: DiagnosticError = field(default_factory=DiagnosticError)
     transmitter_lora_parameters: LoRaParameters = field(default_factory=default_lora_parameters)
     transmitter_gfsk_parameters: GfskParameters = field(default_factory=default_gfsk_parameters)
@@ -177,6 +180,18 @@ class MockWrsGateway:
 
     def read_receiver_info(self) -> ReceiverInfo:
         return ReceiverInfo(bound_device_id=self.receiver_bound_device_id)
+
+    def read_receiver_sdo(self, object_address: int) -> SdoResponse:
+        return SdoResponse(
+            object_address=object_address,
+            object_data=self.receiver_sdo.get(object_address, 0),
+            status=0x4,
+            result_code=0,
+        )
+
+    def write_receiver_sdo(self, object_address: int, object_data: int) -> SdoResponse:
+        self.receiver_sdo[object_address] = object_data
+        return SdoResponse(object_address=object_address, object_data=0, status=0x6, result_code=0)
 
     def read_receiver_lora_parameters(self) -> LoRaParameters:
         return self.receiver_lora_parameters.model_copy(deep=True)

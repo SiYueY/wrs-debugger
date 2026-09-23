@@ -80,11 +80,13 @@ export const api = {
     request<void>('/transmitter/pin', { method: 'PUT', body: JSON.stringify({ pin }) }),
   readTransmitterSdo: (object_address: number) =>
     request<SdoResponse>('/transmitter/sdo/read', {
-      method: 'POST', body: JSON.stringify({ object_address }),
+      method: 'POST',
+      body: JSON.stringify({ object_address }),
     }),
   writeTransmitterSdo: (object_address: number, object_data: number) =>
     request<SdoResponse>('/transmitter/sdo', {
-      method: 'PUT', body: JSON.stringify({ object_address, object_data }),
+      method: 'PUT',
+      body: JSON.stringify({ object_address, object_data }),
     }),
   transmitterLora: () => request<LoRaParameters>('/transmitter/lora-parameters'),
   writeTransmitterLora: (body: LoRaParameters) =>
@@ -110,6 +112,16 @@ export const api = {
     }),
   disconnectReceiver: () => request<Connection>('/receiver/disconnect', { method: 'POST' }),
   receiverInfo: () => request<{ bound_device_id: string | null }>('/receiver'),
+  readReceiverSdo: (object_address: number) =>
+    request<SdoResponse>('/receiver/sdo/read', {
+      method: 'POST',
+      body: JSON.stringify({ object_address }),
+    }),
+  writeReceiverSdo: (object_address: number, object_data: number) =>
+    request<SdoResponse>('/receiver/sdo', {
+      method: 'PUT',
+      body: JSON.stringify({ object_address, object_data }),
+    }),
   receiverLora: () => request<LoRaParameters>('/receiver/lora-parameters'),
   writeReceiverLora: (body: LoRaParameters) =>
     request<void>('/receiver/lora-parameters', { method: 'PUT', body: JSON.stringify(body) }),

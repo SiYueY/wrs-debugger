@@ -41,6 +41,19 @@ _ERRORS: dict[str, tuple[str, int, str]] = {
     "TRANSMITTER_18": ("SDO_IN_PROGRESS", 409, "The transmitter is still processing the SDO request."),
     "TRANSMITTER_19": ("SDO_ERROR", 502, "The transmitter rejected the SDO operation."),
     "TRANSMITTER_20": ("SDO_INVALID_COMMAND", 422, "The transmitter rejected the SDO command."),
+    "RECEIVER_0": ("RECEIVER_INVALID_PARAMETER", 422, "Receiver parameters are invalid."),
+    "RECEIVER_3": ("RECEIVER_NOT_CONNECTED", 409, "Receiver is not connected."),
+    "RECEIVER_4": ("RECEIVER_ALREADY_CONNECTED", 409, "Receiver is already connected."),
+    "RECEIVER_5": ("RECEIVER_DDS_UNAVAILABLE", 503, "Receiver DDS services are unavailable."),
+    "RECEIVER_6": ("RECEIVER_TIMEOUT", 504, "The receiver did not respond in time."),
+    "RECEIVER_7": ("RECEIVER_DISCONNECTED", 503, "The receiver disconnected."),
+    "RECEIVER_8": ("RECEIVER_UNEXPECTED_RESPONSE", 502, "The receiver response is invalid."),
+    "RECEIVER_9": ("RECEIVER_TRANSACTION_MISMATCH", 502, "The receiver transaction did not match."),
+    "RECEIVER_10": ("RECEIVER_REJECTED", 502, "The receiver rejected the request."),
+    "RECEIVER_11": ("RECEIVER_NOT_RECEIVED", 502, "The receiver did not receive the request."),
+    "RECEIVER_12": ("RECEIVER_IN_PROGRESS", 409, "The receiver is still processing the request."),
+    "RECEIVER_13": ("RECEIVER_EXECUTION_ERROR", 502, "The receiver failed to execute the request."),
+    "RECEIVER_14": ("RECEIVER_INVALID_COMMAND", 422, "The receiver rejected the command."),
 }
 
 
@@ -62,6 +75,8 @@ class PybindWrsGateway:
             raise RuntimeError("WRS native transmitter module is unavailable") from error
         self._native: Any = wrs_debugger_native
         self._client: Any = wrs_debugger_native.TransmitterClient()
+        receiver_type = getattr(wrs_debugger_native, "ReceiverClient", None)
+        self._receiver: Any | None = receiver_type() if receiver_type is not None else None
 
     @staticmethod
     def native_executor() -> ThreadedNativeExecutor:
@@ -77,6 +92,30 @@ class PybindWrsGateway:
                 str(error), ("TRANSMITTER_IO_ERROR", 502, "The transmitter operation failed.")
             )
             raise ApplicationError(code, status, "Transmitter operation failed", detail) from error
+
+    def _call_receiver(self, function: Any) -> Any:
+        if self._receiver is None:
+            raise ApplicationError(
+                "RECEIVER_DDS_UNAVAILABLE",
+                503,
+                "Receiver DDS unavailable",
+                "The installed native module does not provide Receiver DDS support.",
+            )
+        try:
+            return function()
+        except ApplicationError:
+            raise
+        except (RuntimeError, ValueError) as error:
+            code, status, detail = _ERRORS.get(
+                str(error), ("RECEIVER_IO_ERROR", 502, "The receiver operation failed.")
+            )
+            raise ApplicationError(code, status, "Receiver operation failed", detail) from error
+
+    def _call_receiver_method(self, name: str, *args: object) -> Any:
+        if self._receiver is None:
+            return self._call_receiver(None)
+        method: Any = getattr(self._receiver, name)
+        return self._call_receiver(lambda: method(*args))
 
     def list_serial_ports(self) -> list[SerialPortInfo]:
         return [
@@ -107,7 +146,7 @@ class PybindWrsGateway:
     def read_transmitter_info(self) -> TransmitterInfo:
         identity = self._call(self._client.identity)
         return TransmitterInfo(
-            device_id=str(self._call(self._client.read_device_id)),
+            device_id=self._call(self._client.read_device_id),
             product_code=identity["product_code"],
             version_number=identity["version_number"],
             serial_number=identity["serial_number"],
@@ -152,31 +191,47 @@ class PybindWrsGateway:
         self._receiver_unavailable()
 
     def connect_receiver(self, domain_id: int) -> None:
-        self._receiver_unavailable()
+        self._call_receiver_method("connect", domain_id)
 
     def disconnect_receiver(self) -> None:
-        self._receiver_unavailable()
+        self._call_receiver_method("disconnect")
 
     def read_receiver_info(self) -> ReceiverInfo:
-        self._receiver_unavailable()
+        return ReceiverInfo.model_validate(
+            self._call_receiver_method("info")
+        )
+
+    def read_receiver_sdo(self, object_address: int) -> SdoResponse:
+        return SdoResponse.model_validate(
+            self._call_receiver_method("read_sdo", object_address)
+        )
+
+    def write_receiver_sdo(self, object_address: int, object_data: int) -> SdoResponse:
+        return SdoResponse.model_validate(
+            self._call_receiver_method("write_sdo", object_address, object_data)
+        )
 
     def read_receiver_lora_parameters(self) -> LoRaParameters:
-        self._receiver_unavailable()
+        return LoRaParameters.model_validate(
+            self._call_receiver_method("read_lora")
+        )
 
     def write_receiver_lora_parameters(self, parameters: LoRaParameters) -> None:
-        self._receiver_unavailable()
+        self._call_receiver_method("write_lora", parameters.model_dump())
 
     def restore_receiver_lora_defaults(self) -> None:
-        self._receiver_unavailable()
+        self._call_receiver_method("restore_lora")
 
     def read_receiver_gfsk_parameters(self) -> GfskParameters:
-        self._receiver_unavailable()
+        return GfskParameters.model_validate(
+            self._call_receiver_method("read_gfsk")
+        )
 
     def write_receiver_gfsk_parameters(self, parameters: GfskParameters) -> None:
-        self._receiver_unavailable()
+        self._call_receiver_method("write_gfsk", parameters.model_dump())
 
     def restore_receiver_gfsk_defaults(self) -> None:
-        self._receiver_unavailable()
+        self._call_receiver_method("restore_gfsk")
 
     def prepare_transmitter_binding(self) -> BindingHandle:
         self._receiver_unavailable()

@@ -1,191 +1,156 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { api, type GfskParameters, type LoRaParameters } from '../api/wrs';
-import GfskParametersForm from '../components/GfskParametersForm.vue';
-import LoRaParametersForm from '../components/LoRaParametersForm.vue';
+import { computed, ref, watch } from 'vue';
+import { api } from '../api/wrs';
+import RadioConfigurationShell from '../components/RadioConfigurationShell.vue';
+import RadioParametersEditor from '../components/RadioParametersEditor.vue';
+import { useOperationFeedback } from '../composables/useOperationFeedback';
+import { useRadioParameterState } from '../composables/useRadioParameterState';
+import { useSdoState } from '../composables/useSdoState';
+import { receiverRadioEditorConfig, validateReceiverRadioParameters } from '../domain/radio';
 import { t } from '../i18n';
 import { useDebuggerStore } from '../stores/debugger';
+
 const store = useDebuggerStore();
-const tab = ref<'lora' | 'gfsk'>('lora');
 const boundId = ref('-');
-const lora = ref<LoRaParameters>();
-const gfsk = ref<GfskParameters>();
-const busy = ref(false);
-const message = ref('');
-const ready = computed(() => store.receiverConnected && !busy.value);
+const radio = useRadioParameterState();
+const sdo = useSdoState(receiverRadioEditorConfig);
+const feedback = useOperationFeedback(() => store.refreshDiagnostic());
+const ready = computed(() => store.receiverConnected && !feedback.busy.value);
 const crossReady = computed(() => ready.value && store.transmitterConnected);
-function validate() {
-  const value = tab.value === 'lora' ? lora.value : gfsk.value;
-  if (!value) return t('readFirst');
-  if (value.payload_len !== 12) return t('payloadFixed');
-  if (value.tx_power < 0 || value.tx_power > (value.param_flags & 1 ? 20 : 10))
-    return t('powerOutOfRange');
-  if (tab.value === 'lora' && lora.value!.spreading_factor <= 6 && lora.value!.preamble_len !== 12)
-    return t('loraPreambleInvalid');
-  if (tab.value === 'gfsk' && 2 * gfsk.value!.freq_deviation < gfsk.value!.bitrate / 2)
-    return t('gfskRateInvalid');
-  return '';
-}
-async function run(action: () => Promise<void>) {
-  busy.value = true;
-  message.value = '';
-  try {
-    await action();
-    message.value = t('operationSucceeded');
-  } catch (error) {
-    message.value = error instanceof Error ? error.message : t('operationFailed');
-  } finally {
-    busy.value = false;
-  }
-}
+
 async function refreshInfo() {
-  await run(async () => {
+  await feedback.run(async () => {
     boundId.value = (await api.receiverInfo()).bound_device_id ?? '-';
   });
 }
-async function read() {
-  await run(async () => {
-    if (tab.value === 'lora') lora.value = await api.receiverLora();
-    else gfsk.value = await api.receiverGfsk();
+
+async function readParameters() {
+  await feedback.run(async () => {
+    sdo.operation.value = 'read';
+    if (sdo.objectAddress.value !== 0) {
+      sdo.applyResponse(await api.readReceiverSdo(sdo.objectAddress.value));
+      return;
+    }
+    if (radio.mode.value === 'lora') radio.lora.value = await api.receiverLora();
+    else radio.gfsk.value = await api.receiverGfsk();
+    sdo.markParameterSuccess('read');
   });
 }
-async function write() {
-  const error = validate();
-  if (error) {
-    message.value = error;
-    return;
+
+async function writeParameters() {
+  if (sdo.objectAddress.value === 0) {
+    const error = validateReceiverRadioParameters(radio.mode.value, radio.current.value);
+    if (error) return void (feedback.message.value = t(error.messageKey));
   }
-  await run(async () => {
-    if (tab.value === 'lora') await api.writeReceiverLora(lora.value!);
-    else await api.writeReceiverGfsk(gfsk.value!);
-    await read();
+  await feedback.run(async () => {
+    sdo.operation.value = 'write';
+    if (sdo.objectAddress.value !== 0) {
+      sdo.applyResponse(await api.writeReceiverSdo(sdo.objectAddress.value, sdo.objectData.value));
+      return;
+    }
+    if (radio.mode.value === 'lora') {
+      await api.writeReceiverLora(radio.lora.value);
+      radio.lora.value = await api.receiverLora();
+    } else {
+      await api.writeReceiverGfsk(radio.gfsk.value);
+      radio.gfsk.value = await api.receiverGfsk();
+    }
+    sdo.markParameterSuccess('write');
   });
 }
-async function restore() {
-  await run(async () => {
-    if (tab.value === 'lora') await api.restoreReceiverLora();
-    else await api.restoreReceiverGfsk();
-    await read();
+
+async function restoreParameters() {
+  if (sdo.objectAddress.value !== 0)
+    return void (feedback.message.value = t('restoreCommunicationOnly'));
+  await feedback.run(async () => {
+    if (radio.mode.value === 'lora') {
+      await api.restoreReceiverLora();
+      radio.lora.value = await api.receiverLora();
+    } else {
+      await api.restoreReceiverGfsk();
+      radio.gfsk.value = await api.receiverGfsk();
+    }
   });
 }
-async function sync() {
-  await run(async () => {
-    const created =
-      tab.value === 'lora' ? await api.syncReceiverLora() : await api.syncReceiverGfsk();
-    await store.trackOperation(created.operation_id);
-    await read();
+
+async function syncParameters() {
+  await feedback.run(async () => {
+    const operation =
+      radio.mode.value === 'lora' ? await api.syncReceiverLora() : await api.syncReceiverGfsk();
+    await store.trackOperation(operation.operation_id);
+    if (radio.mode.value === 'lora') radio.lora.value = await api.receiverLora();
+    else radio.gfsk.value = await api.receiverGfsk();
   });
 }
+
 async function bind() {
-  await run(async () => {
+  await feedback.run(async () => {
     await store.trackOperation((await api.factoryBind()).operation_id);
-    await refreshInfo();
+    boundId.value = (await api.receiverInfo()).bound_device_id ?? '-';
   });
 }
-onMounted(() => {
-  if (store.receiverConnected) void refreshInfo();
+
+watch(
+  () => store.receiverConnected,
+  (connected) => {
+    if (connected) {
+      void refreshInfo();
+      void readParameters();
+    } else {
+      boundId.value = '-';
+      radio.reset();
+      feedback.message.value = '';
+    }
+  },
+  { immediate: true },
+);
+
+watch(radio.mode, () => {
+  feedback.message.value = '';
+  if (store.receiverConnected) void readParameters();
 });
 </script>
+
 <template>
-  <div class="view">
-    <section class="panel identity">
-      <div class="panel-tag">{{ t('binding') }}</div>
-      <div class="row">
-        <label>{{ t('boundDeviceId') }}</label
-        ><span>{{ boundId }}</span
-        ><button class="dbg-btn" :disabled="!ready" @click="refreshInfo">{{ t('refresh') }}</button
-        ><button class="dbg-btn" :disabled="!crossReady" @click="bind">{{ t('bind') }}</button>
+  <RadioConfigurationShell v-model:mode="radio.mode.value" :message="feedback.message.value">
+    <template #identity-primary>
+      <div class="identity-group">
+        <label>{{ t('boundDeviceId') }}</label>
+        <output>{{ boundId }}</output>
+        <button class="dbg-btn" :disabled="!ready" @click="refreshInfo">{{ t('refresh') }}</button>
       </div>
-    </section>
-    <section class="panel parameter-panel">
-      <div class="tabs">
-        <button :class="{ active: tab === 'lora' }" @click="tab = 'lora'">LoRa</button
-        ><button :class="{ active: tab === 'gfsk' }" @click="tab = 'gfsk'">GFSK</button>
+    </template>
+    <template #identity-secondary>
+      <div class="identity-group">
+        <label>{{ t('binding') }}</label>
+        <output>{{ store.transmitterConnected ? t('connected') : '-' }}</output>
+        <button class="dbg-btn" :disabled="!crossReady" @click="bind">{{ t('bind') }}</button>
       </div>
-      <LoRaParametersForm
-        v-if="tab === 'lora' && lora"
-        v-model="lora"
-        :disabled="!ready"
-      /><GfskParametersForm v-if="tab === 'gfsk' && gfsk" v-model="gfsk" :disabled="!ready" />
-      <p v-if="(tab === 'lora' && !lora) || (tab === 'gfsk' && !gfsk)" class="empty">
-        {{ store.receiverConnected ? t('readFirst') : t('connectReceiver') }}
-      </p>
-      <div class="actions">
-        <span :class="{ error: message && message !== t('operationSucceeded') }">{{ message }}</span
-        ><button class="dbg-btn" :disabled="!ready" @click="read">{{ t('read') }}</button
-        ><button class="dbg-btn" :disabled="!ready" @click="write">{{ t('write') }}</button
-        ><button class="dbg-btn" :disabled="!ready" @click="restore">{{ t('restore') }}</button
-        ><button class="dbg-btn" :disabled="!crossReady" @click="sync">{{ t('sync') }}</button>
-      </div>
-    </section>
-  </div>
+    </template>
+
+    <RadioParametersEditor
+      v-model="radio.current.value"
+      v-model:object-address="sdo.objectAddress.value"
+      v-model:object-data="sdo.objectData.value"
+      :kind="radio.mode.value"
+      :config="receiverRadioEditorConfig"
+      :disabled="!ready"
+      :operation="sdo.operation.value"
+      :response-status="sdo.responseStatus.value"
+      :result-code="sdo.resultCode.value"
+    />
+
+    <template #actions>
+      <button class="dbg-btn" :disabled="!ready" @click="readParameters">{{ t('read') }}</button>
+      <button class="dbg-btn" :disabled="!ready || !sdo.canWrite.value" @click="writeParameters">
+        {{ t('write') }}
+      </button>
+      <button class="dbg-btn" :disabled="!ready" @click="restoreParameters">
+        {{ t('restore') }}
+      </button>
+      <button class="dbg-btn" :disabled="!crossReady" @click="syncParameters">
+        {{ t('sync') }}
+      </button>
+    </template>
+  </RadioConfigurationShell>
 </template>
-<style scoped>
-.view {
-  height: 100%;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
-}
-.identity {
-  max-width: 850px;
-}
-.parameter-panel {
-  min-height: 0;
-  overflow: auto;
-}
-.row {
-  display: grid;
-  grid-template-columns: 220px 200px auto auto;
-  align-items: center;
-  gap: 10px;
-  margin: 8px 0;
-}
-.tabs {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.tabs button {
-  width: 110px;
-  height: 32px;
-  border: 0;
-  border-radius: 16px;
-  background: var(--tab);
-  cursor: pointer;
-}
-.tabs .active {
-  background: var(--brand);
-  color: #fff;
-}
-.actions {
-  display: flex;
-  position: sticky;
-  bottom: 0;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  padding-top: 8px;
-  background: #fff;
-}
-.actions .dbg-btn {
-  min-width: var(--parameter-button-width);
-}
-.actions span {
-  margin-right: auto;
-  color: var(--ok);
-}
-.actions .error {
-  color: var(--danger);
-}
-.empty {
-  color: #666;
-}
-@media (max-width: 760px) {
-  .row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-</style>

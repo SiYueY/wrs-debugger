@@ -7,7 +7,7 @@ from wrs_debugger.models.connection import (
     ReceiverConnection,
     ReceiverSettings,
 )
-from wrs_debugger.models.device import ReceiverInfo
+from wrs_debugger.models.device import ReceiverInfo, SdoReadRequest, SdoResponse, SdoWriteRequest
 from wrs_debugger.models.gfsk import GfskParameters
 from wrs_debugger.models.lora import LoRaParameters
 from wrs_debugger.models.operation import OperationCreatedResponse
@@ -58,6 +58,20 @@ async def disconnect(service: ReceiverService = Depends(receiver_service)) -> Re
 @router.get("", response_model=ReceiverInfo, operation_id="get_receiver_info")
 async def get_info(service: ReceiverService = Depends(receiver_service)) -> ReceiverInfo:
     return await service.info()
+
+
+@router.post("/sdo/read", response_model=SdoResponse, operation_id="read_receiver_sdo")
+async def read_sdo(
+    body: SdoReadRequest, service: ReceiverService = Depends(receiver_service)
+) -> SdoResponse:
+    return await service.read_sdo(body.object_address)
+
+
+@router.put("/sdo", response_model=SdoResponse, operation_id="write_receiver_sdo")
+async def write_sdo(
+    body: SdoWriteRequest, service: ReceiverService = Depends(receiver_service)
+) -> SdoResponse:
+    return await service.write_sdo(body.object_address, body.object_data)
 
 
 @router.get(

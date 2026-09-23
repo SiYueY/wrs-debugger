@@ -131,6 +131,8 @@ async def test_system_contract_and_openapi_problem_details(tmp_path: Path) -> No
         assert "/api/v1/transmitter/gfsk-parameters" in paths
         assert "/api/v1/receiver/lora-parameters" in paths
         assert "/api/v1/receiver/gfsk-parameters" in paths
+        assert "/api/v1/receiver/sdo/read" in paths
+        assert "/api/v1/receiver/sdo" in paths
         assert "/api/v1/diagnostics/error" in paths
         response_422 = paths["/api/v1/transmitter/connect"]["post"]["responses"]["422"]
         schema_ref = response_422["content"]["application/json"]["schema"]["$ref"]
@@ -378,6 +380,93 @@ async def test_receiver_info_does_not_duplicate_connection_state(tmp_path: Path)
         body = (await client.get("/api/v1/receiver")).json()
         assert body == {"bound_device_id": None}
         assert "connection_state" not in body
+
+
+@pytest.mark.asyncio
+async def test_receiver_sdo_dictionary_permissions_and_response(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
+        not_connected = await client.post(
+            "/api/v1/receiver/sdo/read", json={"object_address": 0x001}
+        )
+        problem(not_connected, "RECEIVER_NOT_CONNECTED", 409)
+
+        await client.post("/api/v1/receiver/connect", json={"domain_id": 0})
+        product = await client.post(
+            "/api/v1/receiver/sdo/read", json={"object_address": 0x001}
+        )
+        assert product.json() == {
+            "object_address": 0x001,
+            "object_data": 2001,
+            "status": 0x4,
+            "result_code": 0,
+        }
+        assert (
+            await client.post("/api/v1/receiver/sdo/read", json={"object_address": 0x201})
+        ).status_code == 200
+        problem(
+            await client.post("/api/v1/receiver/sdo/read", json={"object_address": 0x004}),
+            "RECEIVER_SDO_INVALID_ADDRESS",
+            422,
+        )
+        problem(
+            await client.put(
+                "/api/v1/receiver/sdo", json={"object_address": 0x001, "object_data": 0x454E}
+            ),
+            "RECEIVER_SDO_READ_ONLY",
+            422,
+        )
+        problem(
+            await client.put(
+                "/api/v1/receiver/sdo", json={"object_address": 0x202, "object_data": 1}
+            ),
+            "RECEIVER_SDO_INVALID_VALUE",
+            422,
+        )
+        written = await client.put(
+            "/api/v1/receiver/sdo",
+            json={"object_address": 0x202, "object_data": 0x0000454E},
+        )
+        assert written.json() == {
+            "object_address": 0x202,
+            "object_data": 0,
+            "status": 0x6,
+            "result_code": 0,
+        }
+        gateway = cast(MockWrsGateway, app.state.gateway)
+        assert gateway.receiver_sdo[0x202] == 0x0000454E
+
+
+@pytest.mark.asyncio
+async def test_receiver_rejects_protocol_invalid_parameters(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, _):
+        await client.post("/api/v1/receiver/connect", json={"domain_id": 0})
+        invalid_lora = {
+            **LORA_ZERO_VALUES,
+            "param_flags": 0,
+            "tx_power": 10,
+            "payload_len": 12,
+            "rssi_threshold": 110,
+            "heartbeat_interval": 200,
+            "heartbeat_loss": 3,
+            "bandwidth": 1,
+            "spreading_factor": 6,
+            "coding_rate": 4,
+            "preamble_len": 11,
+            "sync_word": 0x1424,
+        }
+        response = await client.put("/api/v1/receiver/lora-parameters", json=invalid_lora)
+        problem(response, "PARAMETER_VALIDATION_FAILED", 422)
+        assert response.json()["context"] == {"field": "preamble_len"}
+
+
+@pytest.mark.asyncio
+async def test_receiver_rejects_invalid_gateway_response(tmp_path: Path) -> None:
+    async with api_client(tmp_path) as (client, app):
+        await client.post("/api/v1/receiver/connect", json={"domain_id": 0})
+        gateway = cast(MockWrsGateway, app.state.gateway)
+        gateway.receiver_lora_parameters.preamble_len = 11
+        response = await client.get("/api/v1/receiver/lora-parameters")
+        problem(response, "RECEIVER_INVALID_RESPONSE", 502)
 
 
 @pytest.mark.asyncio
