@@ -46,7 +46,11 @@ endif()
 if(BUILD_TRANSMITTER_PYTHON)
   find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
   find_package(pybind11 CONFIG REQUIRED)
-  pybind11_add_module(wrs_debugger_native wrs/bindings/python/module.cpp)
+  pybind11_add_module(
+    wrs_debugger_native
+    wrs/bindings/python/module.cpp
+    wrs/bindings/python/transmitter.cpp
+    wrs/bindings/python/receiver.cpp)
   target_link_libraries(wrs_debugger_native PRIVATE wrs_transmitter wrs_receiver)
   target_include_directories(wrs_debugger_native PRIVATE wrs/include)
   target_compile_options(wrs_debugger_native PRIVATE -Wall -Wextra -Wpedantic)
