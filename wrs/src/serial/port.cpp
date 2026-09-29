@@ -169,11 +169,13 @@ enum class TransferMode { Wait, Immediate };
 }
 
 [[nodiscard]] Result<speed_t> validate_config(const Config& config) noexcept {
-    if (!is_valid(config.data_bits) || !is_valid(config.parity) || !is_valid(config.stop_bits) ||
-        !is_valid(config.flow_control) || config.baud_rate == 0 ||
-        (config.rs485.enabled && config.flow_control == FlowControl::RtsCts) ||
-        !is_valid_delay(config.rs485.delay_before_send) ||
-        !is_valid_delay(config.rs485.delay_after_send)) {
+    bool result = !is_valid(config.data_bits) || !is_valid(config.parity);
+    result = result || (!is_valid(config.stop_bits) || !is_valid(config.flow_control));
+    result = result || (config.baud_rate == 0);
+    result = result || (config.rs485.enabled && config.flow_control == FlowControl::RtsCts);
+    result = result || (!is_valid_delay(config.rs485.delay_before_send));
+    result = result || (!is_valid_delay(config.rs485.delay_after_send));
+    if (result) {
         return Result<speed_t>::failure(Error::InvalidArgument);
     }
 
@@ -657,8 +659,7 @@ wrs::Result<std::size_t, Error> Port::write(
     return write_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
 }
 
-wrs::Result<std::size_t, Error> Port::try_write(
-    const std::byte* data, std::size_t size) noexcept {
+wrs::Result<std::size_t, Error> Port::try_write(const std::byte* data, std::size_t size) noexcept {
     return write_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
 }
 

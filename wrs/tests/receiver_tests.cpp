@@ -17,13 +17,17 @@ int main() {
 
     Client client;
     assert(!client.is_connected());
-    assert(!client.read_info() && client.read_info().error() == Error::NotConnected);
-    assert(
-        !client.read_lora_parameters() &&
-        client.read_lora_parameters().error() == Error::NotConnected);
-    assert(!client.connect(233) && client.connect(233).error() == Error::InvalidArgument);
-    assert(
-        !client.write_lora_parameters(defaults) &&
-        client.write_lora_parameters(defaults).error() == Error::NotConnected);
+
+    const auto info = client.read_info();
+    assert(!info && info.error() == Error::NotConnected);
+
+    const auto lora = client.read_lora_parameters();
+    assert(!lora && lora.error() == Error::NotConnected);
+
+    const auto connection = client.connect(233);
+    assert(!connection && connection.error() == Error::InvalidArgument);
+
+    const auto write = client.write_lora_parameters(defaults);
+    assert(!write && write.error() == Error::NotConnected);
     assert(client.disconnect());
 }

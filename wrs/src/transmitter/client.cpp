@@ -103,76 +103,70 @@ bool valid_param_flags(std::uint16_t raw_flags, RadioType expected_type) noexcep
     return radio_type == static_cast<std::uint8_t>(expected_type);
 }
 
-bool valid_lora_parameters(const LoRaParamFrame& frame) noexcept {
-    if (frame.object_index != 0 || frame.object_data != 0 || frame.result_code != 0 ||
-        !is_zero(frame.reserved.data(), frame.reserved.size()) ||
-        !valid_param_flags(frame.param_flags, RadioType::LoRa))
-        return false;
-
-    const auto sync_low_nibbles = static_cast<std::uint16_t>(frame.sync_word & 0x0f0f);
+template <typename Frame>
+bool valid_common_parameters(const Frame& frame) noexcept {
     const auto band = ParamFlags::from_raw(frame.param_flags).band;
-    return frame.tx_power >= 0 && frame.tx_power <= 22 &&
-           (band != Band::MHz433 || frame.tx_power <= 10) && frame.payload_len == 12 &&
-           frame.rssi_threshold >= 10 && frame.rssi_threshold <= 148 &&
-           frame.heartbeat_interval >= 200 && frame.heartbeat_interval <= 10000 &&
-           frame.heartbeat_loss >= 1 && frame.bandwidth <= 2 && frame.spreading_factor >= 5 &&
-           frame.spreading_factor <= 12 && frame.coding_rate <= 6 && frame.header_type <= 1 &&
-           frame.preamble_len >= 10 && frame.preamble_len <= 50 &&
-           ((frame.spreading_factor != 5 && frame.spreading_factor != 6) ||
-            frame.preamble_len == 12) &&
-           sync_low_nibbles == 0x0404;
+    bool result = frame.tx_power >= 0 && frame.tx_power <= 22;
+    result = result && (band != Band::MHz433 || frame.tx_power <= 10);
+    result = result && (frame.payload_len == 12);
+    result = result && (frame.rssi_threshold >= 10 && frame.rssi_threshold <= 148);
+    result = result && (frame.heartbeat_interval >= 200 && frame.heartbeat_interval <= 10000);
+    result = result && (frame.heartbeat_loss >= 1 && frame.bandwidth <= 2);
+    return result;
+}
+
+bool valid_lora_fields(const LoRaParamFrame& frame) noexcept {
+    bool result = valid_common_parameters(frame);
+    result = result && (frame.spreading_factor >= 5 && frame.spreading_factor <= 12);
+    result = result && (frame.coding_rate <= 6 && frame.header_type <= 1);
+    result = result && (frame.preamble_len >= 10 && frame.preamble_len <= 50);
+    result = result && ((frame.spreading_factor != 5 && frame.spreading_factor != 6) ||
+                        frame.preamble_len == 12);
+    result = result && ((frame.sync_word & 0x0f0f) == 0x0404);
+    return result;
+}
+
+bool valid_gfsk_fields(const GfskParamFrame& frame) noexcept {
+    bool result = valid_common_parameters(frame);
+    result = result && (frame.bitrate >= 600 && frame.bitrate <= 150000);
+    result = result && (frame.freq_deviation >= 600 && frame.freq_deviation <= 300000);
+    result = result && (static_cast<std::uint64_t>(frame.freq_deviation) * 4 >= frame.bitrate);
+    result = result && (frame.pulse_shaping == 0 ||
+                        (frame.pulse_shaping >= 0x08 && frame.pulse_shaping <= 0x0b));
+    result = result && (frame.preamble_len >= 16);
+    return result;
+}
+
+bool valid_lora_parameters(const LoRaParamFrame& frame) noexcept {
+    bool result = frame.object_index == 0 && frame.object_data == 0 && frame.result_code == 0;
+    result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
+    result = result && (valid_param_flags(frame.param_flags, RadioType::LoRa));
+    result = result && (valid_lora_fields(frame));
+    return result;
 }
 
 bool valid_gfsk_parameters(const GfskParamFrame& frame) noexcept {
-    if (frame.object_index != 0 || frame.object_data != 0 || frame.result_code != 0 ||
-        !is_zero(frame.reserved.data(), frame.reserved.size()) ||
-        !valid_param_flags(frame.param_flags, RadioType::GFSK))
-        return false;
-
-    const auto band = ParamFlags::from_raw(frame.param_flags).band;
-    return frame.tx_power >= 0 && frame.tx_power <= 22 &&
-           (band != Band::MHz433 || frame.tx_power <= 10) && frame.payload_len == 12 &&
-           frame.rssi_threshold >= 10 && frame.rssi_threshold <= 148 &&
-           frame.heartbeat_interval >= 200 && frame.heartbeat_interval <= 10000 &&
-           frame.heartbeat_loss >= 1 && frame.bandwidth <= 2 && frame.bitrate >= 600 &&
-           frame.bitrate <= 150000 && frame.freq_deviation >= 600 &&
-           frame.freq_deviation <= 300000 &&
-           static_cast<std::uint64_t>(frame.freq_deviation) * 4 >= frame.bitrate &&
-           (frame.pulse_shaping == 0 ||
-            (frame.pulse_shaping >= 0x08 && frame.pulse_shaping <= 0x0b)) &&
-           frame.preamble_len >= 16;
+    bool result = frame.object_index == 0 && frame.object_data == 0 && frame.result_code == 0;
+    result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
+    result = result && (valid_param_flags(frame.param_flags, RadioType::GFSK));
+    result = result && (valid_gfsk_fields(frame));
+    return result;
 }
 
 bool valid_lora_response(const LoRaParamFrame& frame) noexcept {
-    const auto band = ParamFlags::from_raw(frame.param_flags).band;
-    return frame.object_index == 0x4000 && frame.object_data == 0 &&
-           valid_param_flags(frame.param_flags, RadioType::LoRa) && frame.tx_power >= 0 &&
-           frame.tx_power <= 22 && (band != Band::MHz433 || frame.tx_power <= 10) &&
-           frame.payload_len == 12 && frame.rssi_threshold >= 10 && frame.rssi_threshold <= 148 &&
-           frame.heartbeat_interval >= 200 && frame.heartbeat_interval <= 10000 &&
-           frame.heartbeat_loss >= 1 && frame.bandwidth <= 2 && frame.spreading_factor >= 5 &&
-           frame.spreading_factor <= 12 && frame.coding_rate <= 6 && frame.header_type <= 1 &&
-           frame.preamble_len >= 10 && frame.preamble_len <= 50 &&
-           ((frame.spreading_factor != 5 && frame.spreading_factor != 6) ||
-            frame.preamble_len == 12) &&
-           static_cast<std::uint16_t>(frame.sync_word & 0x0f0f) == 0x0404 &&
-           is_zero(frame.reserved.data(), frame.reserved.size());
+    bool result = frame.object_index == 0x4000 && frame.object_data == 0;
+    result = result && (valid_param_flags(frame.param_flags, RadioType::LoRa));
+    result = result && (valid_lora_fields(frame));
+    result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
+    return result;
 }
 
 bool valid_gfsk_response(const GfskParamFrame& frame) noexcept {
-    const auto band = ParamFlags::from_raw(frame.param_flags).band;
-    return frame.object_index == 0x4000 && frame.object_data == 0 &&
-           valid_param_flags(frame.param_flags, RadioType::GFSK) && frame.tx_power >= 0 &&
-           frame.tx_power <= 22 && (band != Band::MHz433 || frame.tx_power <= 10) &&
-           frame.payload_len == 12 && frame.rssi_threshold >= 10 && frame.rssi_threshold <= 148 &&
-           frame.heartbeat_interval >= 200 && frame.heartbeat_interval <= 10000 &&
-           frame.heartbeat_loss >= 1 && frame.bandwidth <= 2 && frame.bitrate >= 600 &&
-           frame.bitrate <= 150000 && frame.freq_deviation >= 600 &&
-           frame.freq_deviation <= 300000 &&
-           static_cast<std::uint64_t>(frame.freq_deviation) * 4 >= frame.bitrate &&
-           (frame.pulse_shaping == 0 ||
-            (frame.pulse_shaping >= 0x08 && frame.pulse_shaping <= 0x0b)) &&
-           frame.preamble_len >= 16 && is_zero(frame.reserved.data(), frame.reserved.size());
+    bool result = frame.object_index == 0x4000 && frame.object_data == 0;
+    result = result && (valid_param_flags(frame.param_flags, RadioType::GFSK));
+    result = result && (valid_gfsk_fields(frame));
+    result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
+    return result;
 }
 
 Error sdo_status_error(std::uint16_t status) noexcept {
@@ -194,7 +188,8 @@ std::uint32_t response_transaction_id(const Bytes& bytes, SystemCmd expected) no
     if (expected == SystemCmd::NormalRsp) return 0;
     if (expected == SystemCmd::PinCfgRsp) return read_le32(bytes.bytes() + 12);
     if (expected == SystemCmd::BindRsp || expected == SystemCmd::FindRsp ||
-        expected == SystemCmd::UnbindRsp) return read_le32(bytes.bytes() + 20);
+        expected == SystemCmd::UnbindRsp)
+        return read_le32(bytes.bytes() + 20);
     return read_le32(bytes.bytes() + 1);
 }
 
@@ -343,9 +338,8 @@ wrs::Result<void, Error> Client::find_binding(const DeviceKeyFrame& binding) noe
     auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::FindRsp);
     if (!response) return Result<void>::failure(response.error());
     const auto frame = DeviceKeyFrame::from_bytes(response.value());
-    return frame.device_id == binding.device_id
-               ? Result<void>::success()
-               : Result<void>::failure(Error::InvalidResponse);
+    return frame.device_id == binding.device_id ? Result<void>::success()
+                                                : Result<void>::failure(Error::InvalidResponse);
 }
 
 wrs::Result<void, Error> Client::cancel_binding(const DeviceKeyFrame& binding) noexcept {

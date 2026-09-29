@@ -97,8 +97,7 @@ public:
      * @return The bytes read, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] wrs::Result<std::size_t, Error> read(
-        std::byte* data, std::size_t size) noexcept;
+    [[nodiscard]] wrs::Result<std::size_t, Error> read(std::byte* data, std::size_t size) noexcept;
 
     /**
      * @brief Writes one positive transfer to the TTY, waiting if needed.
@@ -184,8 +183,7 @@ public:
      *         the deadline, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] wrs::Result<void, Error> wait_readable(
-        std::chrono::nanoseconds timeout) noexcept;
+    [[nodiscard]] wrs::Result<void, Error> wait_readable(std::chrono::nanoseconds timeout) noexcept;
 
     /**
      * @brief Waits only for output readiness.
@@ -198,8 +196,7 @@ public:
      *         the deadline, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] wrs::Result<void, Error> wait_writable(
-        std::chrono::nanoseconds timeout) noexcept;
+    [[nodiscard]] wrs::Result<void, Error> wait_writable(std::chrono::nanoseconds timeout) noexcept;
 
     /**
      * @brief Returns a snapshot of bytes currently queued for input.

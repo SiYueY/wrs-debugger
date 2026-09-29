@@ -25,8 +25,12 @@ void test_flags() {
     flags.radio_type = RadioType::GFSK;
     assert(flags.to_raw() == 0x403f);
     const auto decoded = ParamFlags::from_raw(0x403f);
-    assert(decoded.band == Band::MHz915 && !decoded.crc_enabled && !decoded.estop_enabled);
-    assert(!decoded.heartbeat_enabled && !decoded.one_to_one && decoded.channel_scan);
+    assert(decoded.band == Band::MHz915);
+    assert(!decoded.crc_enabled);
+    assert(!decoded.estop_enabled);
+    assert(!decoded.heartbeat_enabled);
+    assert(!decoded.one_to_one);
+    assert(decoded.channel_scan);
     assert(decoded.radio_type == RadioType::GFSK);
 }
 
@@ -53,10 +57,20 @@ void test_lora_frame() {
     frame.result_code = static_cast<std::uint8_t>(ResultCode::Failure);
     frame.crc16 = 0xbeef;
     const auto raw = frame.to_bytes();
-    assert(raw[0] == 0x05 && raw[1] == 0x11 && raw[4] == 0x44);
-    assert(raw[5] == 0x23 && raw[6] == 0x61 && raw[7] == 0x55 && raw[10] == 0x88);
-    assert(raw[13] == 0xf4 && raw[14] == 0xff && raw[27] == 0x24 && raw[28] == 0x14);
-    assert(raw[38] == 0xa5 && raw[39] == 0xff && has_valid_crc(raw));
+    assert(raw[0] == 0x05);
+    assert(raw[1] == 0x11);
+    assert(raw[4] == 0x44);
+    assert(raw[5] == 0x23);
+    assert(raw[6] == 0x61);
+    assert(raw[7] == 0x55);
+    assert(raw[10] == 0x88);
+    assert(raw[13] == 0xf4);
+    assert(raw[14] == 0xff);
+    assert(raw[27] == 0x24);
+    assert(raw[28] == 0x14);
+    assert(raw[38] == 0xa5);
+    assert(raw[39] == 0xff);
+    assert(has_valid_crc(raw));
     assert(read_le16(raw.bytes() + kFrameBodySize) != frame.crc16);
     const auto round_trip = LoRaParamFrame::from_bytes(raw);
     assert(round_trip.transaction_id == frame.transaction_id && round_trip.tx_power == -12);
@@ -79,8 +93,12 @@ void test_gfsk_frame() {
     frame.sync_word = 0x1424;
     const auto raw = frame.to_bytes();
     assert(raw[22] == 2 && read_le32(raw.bytes() + 23) == 50000);
-    assert(read_le32(raw.bytes() + 27) == 25000 && raw[31] == 0x09 && raw[32] == 16);
-    assert(raw[33] == 0x24 && raw[34] == 0x14 && has_valid_crc(raw));
+    assert(read_le32(raw.bytes() + 27) == 25000);
+    assert(raw[31] == 0x09);
+    assert(raw[32] == 16);
+    assert(raw[33] == 0x24);
+    assert(raw[34] == 0x14);
+    assert(has_valid_crc(raw));
     const auto round_trip = GfskParamFrame::from_bytes(raw);
     assert(round_trip.bitrate == 50000 && round_trip.freq_deviation == 25000);
 }
@@ -91,7 +109,9 @@ void test_pin_device_key_and_sdo() {
     pin.pin = {'1', '2', '3', '4', '5', '6'};
     pin.transaction_id = 0x01020304;
     const auto pin_bytes = pin.to_bytes();
-    assert(pin_bytes[1] == '1' && pin_bytes[6] == '6' && pin_bytes[12] == 0x04);
+    assert(pin_bytes[1] == '1');
+    assert(pin_bytes[6] == '6');
+    assert(pin_bytes[12] == 0x04);
     assert(
         has_valid_crc(pin_bytes) &&
         PinFrame::from_bytes(pin_bytes).transaction_id == pin.transaction_id);
@@ -102,7 +122,10 @@ void test_pin_device_key_and_sdo() {
     key.kbind[0] = 0x42;
     key.transaction_id = 9;
     const auto key_bytes = key.to_bytes();
-    assert(key_bytes[1] == 1 && key_bytes[3] == 3 && key_bytes[4] == 0x42 && key_bytes[20] == 9);
+    assert(key_bytes[1] == 1);
+    assert(key_bytes[3] == 3);
+    assert(key_bytes[4] == 0x42);
+    assert(key_bytes[20] == 9);
     assert(DeviceKeyFrame::from_bytes(key_bytes).kbind[0] == 0x42);
 
     SdoFrame sdo{};
@@ -111,7 +134,9 @@ void test_pin_device_key_and_sdo() {
     sdo.object_index = 0x4001;
     sdo.object_data = 0x44332211;
     const auto sdo_bytes = sdo.to_bytes();
-    assert(sdo_bytes[5] == 1 && sdo_bytes[6] == 0x40 && sdo_bytes[11] == 0);
+    assert(sdo_bytes[5] == 1);
+    assert(sdo_bytes[6] == 0x40);
+    assert(sdo_bytes[11] == 0);
     const auto decoded = SdoFrame::from_bytes(sdo_bytes);
     assert(decoded.object_index == 0x4001 && decoded.object_data == 0x44332211);
 
@@ -123,8 +148,12 @@ void test_pin_device_key_and_sdo() {
     normal.rssi = 72;
     normal.snr = -24;
     const auto normal_bytes = normal.to_bytes();
-    assert(normal_bytes[0] == 0x86 && normal_bytes[1] == 0xa1 && normal_bytes[3] == 0xc3);
-    assert(normal_bytes[4] == 0x67 && normal_bytes[7] == 0x81 && has_valid_crc(normal_bytes));
+    assert(normal_bytes[0] == 0x86);
+    assert(normal_bytes[1] == 0xa1);
+    assert(normal_bytes[3] == 0xc3);
+    assert(normal_bytes[4] == 0x67);
+    assert(normal_bytes[7] == 0x81);
+    assert(has_valid_crc(normal_bytes));
     const auto decoded_normal = NormalFrame::from_bytes(normal_bytes);
     assert(decoded_normal.device_id == normal.device_id);
     assert(decoded_normal.wireless_counter == normal.wireless_counter);
@@ -145,6 +174,7 @@ bool read_all(int fd, std::uint8_t* bytes, std::size_t size) {
     }
     return true;
 }
+
 bool write_all(int fd, const std::uint8_t* bytes, std::size_t size) {
     std::size_t sent = 0;
     while (sent < size) {
@@ -158,6 +188,7 @@ bool write_all(int fd, const std::uint8_t* bytes, std::size_t size) {
     }
     return true;
 }
+
 enum class BadResponse { Crc, Command, Transaction, Result };
 
 Bytes successful_sdo_response(const Bytes& request, std::uint32_t object_data) {
@@ -170,6 +201,7 @@ Bytes successful_sdo_response(const Bytes& request, std::uint32_t object_data) {
     response.object_data = object_data;
     return response.to_bytes();
 }
+
 Bytes bad_lora_response(const Bytes& request, BadResponse kind) {
     LoRaParamFrame response{};
     response.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadRsp);
@@ -196,6 +228,7 @@ Bytes bad_lora_response(const Bytes& request, BadResponse kind) {
     }
     return bytes;
 }
+
 void test_client_response_validation(BadResponse kind, Error expected) {
     int master = -1;
     int slave = -1;

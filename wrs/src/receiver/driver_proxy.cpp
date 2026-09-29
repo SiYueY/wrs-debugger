@@ -237,46 +237,64 @@ private:
 };
 
 DriverProxy::DriverProxy() noexcept : impl_(new Impl()) {}
+
 DriverProxy::~DriverProxy() noexcept = default;
+
 DriverProxy::DriverProxy(DriverProxy&&) noexcept = default;
+
 DriverProxy& DriverProxy::operator=(DriverProxy&&) noexcept = default;
+
 Result<void> DriverProxy::connect(std::uint16_t domain_id) noexcept {
     auto result = impl_->connect(domain_id);
     if (result) domain_id_ = domain_id;
     return result;
 }
+
 Result<void> DriverProxy::disconnect() noexcept {
     auto result = impl_->disconnect();
     domain_id_ = 0;
     return result;
 }
+
 bool DriverProxy::is_connected() const noexcept { return impl_->is_connected(); }
+
 std::uint16_t DriverProxy::domain_id() const noexcept { return domain_id_; }
+
 Result<ReceiverInfo> DriverProxy::read_info() noexcept { return impl_->read_info(); }
+
 Result<ReceiverState> DriverProxy::read_state() noexcept { return impl_->read_state(); }
+
 Result<BindingState> DriverProxy::binding_state() noexcept { return impl_->binding_state(); }
+
 Result<void> DriverProxy::start_binding(
     std::uint32_t device_id, const std::array<std::uint8_t, 16>& kbind,
     std::uint32_t transaction_id) noexcept {
     return impl_->start_binding(device_id, kbind, transaction_id);
 }
+
 Result<SdoResponse> DriverProxy::read_sdo(std::uint16_t) noexcept {
     return Result<SdoResponse>::failure(is_connected() ? Error::Unsupported : Error::NotConnected);
 }
+
 Result<SdoResponse> DriverProxy::write_sdo(std::uint16_t, std::uint32_t) noexcept {
     return Result<SdoResponse>::failure(is_connected() ? Error::Unsupported : Error::NotConnected);
 }
+
 Result<LoRaParameters> DriverProxy::read_lora_parameters() noexcept { return impl_->read_lora(); }
+
 Result<void> DriverProxy::write_lora_parameters(const LoRaParameters& parameters) noexcept {
     return impl_->write_lora(parameters, next_transaction());
 }
+
 Result<GfskParameters> DriverProxy::read_gfsk_parameters() noexcept {
     return Result<GfskParameters>::failure(
         is_connected() ? Error::Unsupported : Error::NotConnected);
 }
+
 Result<void> DriverProxy::write_gfsk_parameters(const GfskParameters&) noexcept {
     return Result<void>::failure(is_connected() ? Error::Unsupported : Error::NotConnected);
 }
+
 std::uint32_t DriverProxy::next_transaction() noexcept {
     const auto transaction_id = next_transaction_id_++;
     if (next_transaction_id_ == 0) next_transaction_id_ = 1;

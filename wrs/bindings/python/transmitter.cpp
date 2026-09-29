@@ -19,8 +19,7 @@ using namespace py::literals;
 namespace binding {
 namespace {
 [[noreturn]] void fail(transmitter::Error error) {
-    throw std::runtime_error("TRANSMITTER_" +
-                             std::to_string(static_cast<unsigned int>(error)));
+    throw std::runtime_error("TRANSMITTER_" + std::to_string(static_cast<unsigned int>(error)));
 }
 
 template <typename T>
@@ -100,15 +99,16 @@ transmitter::GfskParamFrame from_transmitter_gfsk_param(const py::dict& dict) {
     value.sync_word = dict["sync_word"].cast<std::uint16_t>();
     return value;
 }
+
 transmitter::DeviceKeyFrame binding_frame(const py::dict& context) {
     transmitter::DeviceKeyFrame frame{};
     const auto device_id = context["device_id"].cast<std::uint32_t>();
     const std::string key = context["kbind"].cast<std::string>();
     if (device_id == 0 || device_id > 0xffffffU || key.size() != frame.kbind.size())
         throw std::invalid_argument("Invalid binding context");
-    frame.device_id = {static_cast<std::uint8_t>(device_id >> 16),
-                       static_cast<std::uint8_t>(device_id >> 8),
-                       static_cast<std::uint8_t>(device_id)};
+    frame.device_id = {
+        static_cast<std::uint8_t>(device_id >> 16), static_cast<std::uint8_t>(device_id >> 8),
+        static_cast<std::uint8_t>(device_id)};
     std::copy(key.begin(), key.end(), frame.kbind.begin());
     frame.transaction_id = context["transaction_id"].cast<std::uint32_t>();
     if (frame.transaction_id == 0) throw std::invalid_argument("Invalid binding transaction");
@@ -128,11 +128,9 @@ void bind_transmitter_lora(py::class_<transmitter::Client>& client) {
             [](transmitter::Client& value, const py::dict& dict) {
                 unwrap(value.write_lora_parameters(from_transmitter_lora_param(dict)));
             })
-        .def(
-            "restore_lora",
-            [](transmitter::Client& value) {
-                unwrap(value.restore_default_parameters(transmitter::RadioType::LoRa));
-            });
+        .def("restore_lora", [](transmitter::Client& value) {
+            unwrap(value.restore_default_parameters(transmitter::RadioType::LoRa));
+        });
 }
 
 void bind_transmitter_gfsk(py::class_<transmitter::Client>& client) {
@@ -147,11 +145,9 @@ void bind_transmitter_gfsk(py::class_<transmitter::Client>& client) {
             [](transmitter::Client& value, const py::dict& dict) {
                 unwrap(value.write_gfsk_parameters(from_transmitter_gfsk_param(dict)));
             })
-        .def(
-            "restore_gfsk",
-            [](transmitter::Client& value) {
-                unwrap(value.restore_default_parameters(transmitter::RadioType::GFSK));
-            });
+        .def("restore_gfsk", [](transmitter::Client& value) {
+            unwrap(value.restore_default_parameters(transmitter::RadioType::GFSK));
+        });
 }
 
 void bind_transmitter(py::module_& module) {
@@ -171,83 +167,85 @@ void bind_transmitter(py::module_& module) {
         return ports;
     });
 
-    auto client = py::class_<transmitter::Client>(module, "TransmitterClient")
-                      .def(py::init<>())
-                      .def(
-                          "open",
-                          [](transmitter::Client& value, const std::string& path) {
-                              unwrap(value.open(
-                                  path, std::chrono::milliseconds(300),
-                                  std::chrono::milliseconds(0), 1));
-                          })
-                      .def("close", [](transmitter::Client& value) { unwrap(value.close()); })
-                      .def(
-                          "identity",
-                          [](const transmitter::Client& value) {
-                              const auto& identity = value.identity();
-                              return py::dict(
-                                  "product_code"_a = identity.product_code,
-                                  "version_number"_a = identity.version_number,
-                                  "serial_number"_a = identity.serial_number);
-                          })
-                      .def(
-                          "read_device_id",
-                          [](transmitter::Client& value) -> py::object {
-                              const auto device_id = unwrap(value.read_device_id());
-                              if (device_id == std::array<std::uint8_t, 3>{}) return py::none();
-                              return py::cast(device_id_to_string(device_id));
-                          })
-                      .def("prepare_binding", [](transmitter::Client& value) {
-                          const auto frame = unwrap(value.prepare_binding());
-                          const auto device_id = (static_cast<std::uint32_t>(frame.device_id[0]) << 16) |
-                                                 (static_cast<std::uint32_t>(frame.device_id[1]) << 8) |
-                                                 frame.device_id[2];
-                          return py::dict("device_id"_a = device_id,
-                                          "kbind"_a = py::bytes(
-                                              reinterpret_cast<const char*>(frame.kbind.data()),
-                                              frame.kbind.size()),
-                                          "transaction_id"_a = frame.transaction_id);
-                      })
-                      .def("find_binding", [](transmitter::Client& value, const py::dict& context) {
-                          unwrap(value.find_binding(binding_frame(context)));
-                      })
-                      .def("cancel_binding", [](transmitter::Client& value, const py::dict& context) {
-                          unwrap(value.cancel_binding(binding_frame(context)));
-                      })
-                      .def(
-                          "read_pin",
-                          [](transmitter::Client& value) {
-                              const auto pin = unwrap(value.read_pin());
-                              return std::string(pin.pin.begin(), pin.pin.end());
-                          })
-                      .def(
-                          "read_sdo",
-                          [](transmitter::Client& value, std::uint16_t address) {
-                              const auto frame = unwrap(value.read_sdo(address));
-                              return py::dict(
-                                  "object_address"_a = (frame.object_index & 0x0fffU),
-                                  "object_data"_a = frame.object_data,
-                                  "status"_a = (frame.object_index >> 12U),
-                                  "result_code"_a = frame.result_code);
-                          })
-                      .def(
-                          "write_sdo",
-                          [](transmitter::Client& value, std::uint16_t address,
-                             std::uint32_t data) {
-                              transmitter::SdoFrame frame{};
-                              frame.object_index = address;
-                              frame.object_data = data;
-                              unwrap(value.write_sdo(frame));
-                          })
-                      .def(
-                          "write_pin",
-                          [](transmitter::Client& value, const std::string& pin) {
-                              if (pin.size() != 6)
-                                  throw std::invalid_argument("PIN must contain six digits");
-                              transmitter::PinFrame frame{};
-                              std::copy(pin.begin(), pin.end(), frame.pin.begin());
-                              unwrap(value.write_pin(frame));
-                          });
+    auto client =
+        py::class_<transmitter::Client>(module, "TransmitterClient")
+            .def(py::init<>())
+            .def(
+                "open",
+                [](transmitter::Client& value, const std::string& path) {
+                    unwrap(value.open(
+                        path, std::chrono::milliseconds(300), std::chrono::milliseconds(0), 1));
+                })
+            .def("close", [](transmitter::Client& value) { unwrap(value.close()); })
+            .def(
+                "identity",
+                [](const transmitter::Client& value) {
+                    const auto& identity = value.identity();
+                    return py::dict(
+                        "product_code"_a = identity.product_code,
+                        "version_number"_a = identity.version_number,
+                        "serial_number"_a = identity.serial_number);
+                })
+            .def(
+                "read_device_id",
+                [](transmitter::Client& value) -> py::object {
+                    const auto device_id = unwrap(value.read_device_id());
+                    if (device_id == std::array<std::uint8_t, 3>{}) return py::none();
+                    return py::cast(device_id_to_string(device_id));
+                })
+            .def(
+                "prepare_binding",
+                [](transmitter::Client& value) {
+                    const auto frame = unwrap(value.prepare_binding());
+                    const auto device_id = (static_cast<std::uint32_t>(frame.device_id[0]) << 16) |
+                                           (static_cast<std::uint32_t>(frame.device_id[1]) << 8) |
+                                           frame.device_id[2];
+                    return py::dict(
+                        "device_id"_a = device_id,
+                        "kbind"_a = py::bytes(
+                            reinterpret_cast<const char*>(frame.kbind.data()), frame.kbind.size()),
+                        "transaction_id"_a = frame.transaction_id);
+                })
+            .def(
+                "find_binding",
+                [](transmitter::Client& value, const py::dict& context) {
+                    unwrap(value.find_binding(binding_frame(context)));
+                })
+            .def(
+                "cancel_binding",
+                [](transmitter::Client& value, const py::dict& context) {
+                    unwrap(value.cancel_binding(binding_frame(context)));
+                })
+            .def(
+                "read_pin",
+                [](transmitter::Client& value) {
+                    const auto pin = unwrap(value.read_pin());
+                    return std::string(pin.pin.begin(), pin.pin.end());
+                })
+            .def(
+                "read_sdo",
+                [](transmitter::Client& value, std::uint16_t address) {
+                    const auto frame = unwrap(value.read_sdo(address));
+                    return py::dict(
+                        "object_address"_a = (frame.object_index & 0x0fffU),
+                        "object_data"_a = frame.object_data,
+                        "status"_a = (frame.object_index >> 12U),
+                        "result_code"_a = frame.result_code);
+                })
+            .def(
+                "write_sdo",
+                [](transmitter::Client& value, std::uint16_t address, std::uint32_t data) {
+                    transmitter::SdoFrame frame{};
+                    frame.object_index = address;
+                    frame.object_data = data;
+                    unwrap(value.write_sdo(frame));
+                })
+            .def("write_pin", [](transmitter::Client& value, const std::string& pin) {
+                if (pin.size() != 6) throw std::invalid_argument("PIN must contain six digits");
+                transmitter::PinFrame frame{};
+                std::copy(pin.begin(), pin.end(), frame.pin.begin());
+                unwrap(value.write_pin(frame));
+            });
 
     bind_transmitter_lora(client);
     bind_transmitter_gfsk(client);

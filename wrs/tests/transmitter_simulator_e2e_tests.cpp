@@ -21,6 +21,17 @@ std::string stable_path() {
     return directory + "/tty";
 }
 
+bool open_when_simulator_ready(
+    transmitter::Client& client, const std::string& path, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    do {
+        const auto opened = client.open(path, timeout, 0ms, 1);
+        if (opened) return true;
+        if (opened.error() != transmitter::Error::TimedOut) return false;
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
+}
+
 void test_normal_path() {
     transmitter_simulator::Simulator simulator;
     transmitter_simulator::SimulatorOptions options{};
@@ -32,7 +43,7 @@ void test_normal_path() {
         return port.path.compare(0, 9, "/dev/pts/") == 0;
     }));
     transmitter::Client client;
-    assert(client.open(options.transport.stable_path, 300ms, 0ms, 1));
+    assert(open_when_simulator_ready(client, options.transport.stable_path, 300ms));
     assert(client.read_lora_parameters());
     assert(client.read_gfsk_parameters());
     assert(client.read_pin());
@@ -54,7 +65,7 @@ void test_crc_fault() {
     options.transport.stable_path = stable_path();
     assert(simulator.start(options));
     transmitter::Client client;
-    assert(client.open(options.transport.stable_path, 300ms, 0ms, 1));
+    assert(open_when_simulator_ready(client, options.transport.stable_path, 300ms));
     transmitter_simulator::FaultConfig fault{};
     fault.corrupt_next_crc = true;
     assert(simulator.set_fault_config(fault));
@@ -69,7 +80,7 @@ void test_fault_error_mapping() {
     options.transport.stable_path = stable_path();
     assert(simulator.start(options));
     transmitter::Client client;
-    assert(client.open(options.transport.stable_path, 300ms, 0ms, 1));
+    assert(open_when_simulator_ready(client, options.transport.stable_path, 300ms));
 
     transmitter_simulator::FaultConfig wrong_command{};
     wrong_command.wrong_next_command = true;
@@ -92,7 +103,7 @@ void test_timeout_rejection_and_disconnect_mapping() {
     options.transport.stable_path = stable_path();
     assert(simulator.start(options));
     transmitter::Client client;
-    assert(client.open(options.transport.stable_path, 100ms, 0ms, 1));
+    assert(open_when_simulator_ready(client, options.transport.stable_path, 100ms));
 
     transmitter_simulator::FaultConfig wrong_transaction{};
     wrong_transaction.wrong_next_transaction = true;

@@ -17,8 +17,7 @@ using namespace py::literals;
 namespace binding {
 namespace {
 [[noreturn]] void fail(receiver::Error error) {
-    throw std::runtime_error("RECEIVER_" +
-                             std::to_string(static_cast<unsigned int>(error)));
+    throw std::runtime_error("RECEIVER_" + std::to_string(static_cast<unsigned int>(error)));
 }
 
 template <typename T>
@@ -112,9 +111,7 @@ void bind_receiver_lora(py::class_<receiver::Client>& client) {
             [](receiver::Client& value, const py::dict& dict) {
                 unwrap(value.write_lora_parameters(from_receiver_lora_param(dict)));
             })
-        .def(
-            "restore_lora",
-            [](receiver::Client& value) { unwrap(value.restore_lora()); });
+        .def("restore_lora", [](receiver::Client& value) { unwrap(value.restore_lora()); });
 }
 
 void bind_receiver_gfsk(py::class_<receiver::Client>& client) {
@@ -129,70 +126,62 @@ void bind_receiver_gfsk(py::class_<receiver::Client>& client) {
             [](receiver::Client& value, const py::dict& dict) {
                 unwrap(value.write_gfsk_parameters(from_receiver_gfsk_param(dict)));
             })
-        .def(
-            "restore_gfsk",
-            [](receiver::Client& value) { unwrap(value.restore_gfsk()); });
+        .def("restore_gfsk", [](receiver::Client& value) { unwrap(value.restore_gfsk()); });
 }
 
 void bind_receiver(py::module_& module) {
-    auto client = py::class_<receiver::Client>(module, "ReceiverClient")
-                      .def(py::init<>())
-                      .def(
-                          "connect",
-                          [](receiver::Client& value, std::uint16_t domain_id) {
-                              unwrap(value.connect(domain_id));
-                          })
-                      .def(
-                          "disconnect",
-                          [](receiver::Client& value) { unwrap(value.disconnect()); })
-                      .def(
-                          "info",
-                          [](receiver::Client& value) {
-                              const auto info = unwrap(value.read_info());
-                              const bool bound = info.bound_device_id[0] != 0 ||
-                                                  info.bound_device_id[1] != 0 ||
-                                                  info.bound_device_id[2] != 0;
-                              return py::dict(
-                                  "bound_device_id"_a =
-                                      bound ? py::cast(device_id_to_string(info.bound_device_id))
-                                            : py::none());
-                          })
-                      .def("binding_state", [](receiver::Client& value) {
-                          const auto state = unwrap(value.binding_state());
-                          return py::dict("bound"_a = state.bound,
-                                          "device_id"_a = state.device_id);
-                      })
-                      .def("start_binding", [](receiver::Client& value,
-                                                std::uint32_t device_id,
-                                                const py::bytes& key,
-                                                std::uint32_t transaction_id) {
-                          const std::string bytes = key;
-                          if (bytes.size() != 16) throw std::invalid_argument("Kbind must be 16 bytes");
-                          std::array<std::uint8_t, 16> kbind{};
-                          std::copy(bytes.begin(), bytes.end(), kbind.begin());
-                          unwrap(value.start_binding(device_id, kbind, transaction_id));
-                      })
-                      .def(
-                          "read_sdo",
-                          [](receiver::Client& value, std::uint16_t address) {
-                              const auto response = unwrap(value.read_sdo(address));
-                              return py::dict(
-                                  "object_address"_a = response.object_address,
-                                  "object_data"_a = response.object_data,
-                                  "status"_a = response.status,
-                                  "result_code"_a = response.result_code);
-                          })
-                      .def(
-                          "write_sdo",
-                          [](receiver::Client& value, std::uint16_t address,
-                             std::uint32_t data) {
-                              const auto response = unwrap(value.write_sdo(address, data));
-                              return py::dict(
-                                  "object_address"_a = response.object_address,
-                                  "object_data"_a = response.object_data,
-                                  "status"_a = response.status,
-                                  "result_code"_a = response.result_code);
-                          });
+    auto client =
+        py::class_<receiver::Client>(module, "ReceiverClient")
+            .def(py::init<>())
+            .def(
+                "connect", [](receiver::Client& value,
+                              std::uint16_t domain_id) { unwrap(value.connect(domain_id)); })
+            .def("disconnect", [](receiver::Client& value) { unwrap(value.disconnect()); })
+            .def(
+                "info",
+                [](receiver::Client& value) {
+                    const auto info = unwrap(value.read_info());
+                    const bool bound = info.bound_device_id[0] != 0 ||
+                                       info.bound_device_id[1] != 0 || info.bound_device_id[2] != 0;
+                    return py::dict(
+                        "bound_device_id"_a =
+                            bound ? py::cast(device_id_to_string(info.bound_device_id))
+                                  : py::none());
+                })
+            .def(
+                "binding_state",
+                [](receiver::Client& value) {
+                    const auto state = unwrap(value.binding_state());
+                    return py::dict("bound"_a = state.bound, "device_id"_a = state.device_id);
+                })
+            .def(
+                "start_binding",
+                [](receiver::Client& value, std::uint32_t device_id, const py::bytes& key,
+                   std::uint32_t transaction_id) {
+                    const std::string bytes = key;
+                    if (bytes.size() != 16) throw std::invalid_argument("Kbind must be 16 bytes");
+                    std::array<std::uint8_t, 16> kbind{};
+                    std::copy(bytes.begin(), bytes.end(), kbind.begin());
+                    unwrap(value.start_binding(device_id, kbind, transaction_id));
+                })
+            .def(
+                "read_sdo",
+                [](receiver::Client& value, std::uint16_t address) {
+                    const auto response = unwrap(value.read_sdo(address));
+                    return py::dict(
+                        "object_address"_a = response.object_address,
+                        "object_data"_a = response.object_data, "status"_a = response.status,
+                        "result_code"_a = response.result_code);
+                })
+            .def(
+                "write_sdo",
+                [](receiver::Client& value, std::uint16_t address, std::uint32_t data) {
+                    const auto response = unwrap(value.write_sdo(address, data));
+                    return py::dict(
+                        "object_address"_a = response.object_address,
+                        "object_data"_a = response.object_data, "status"_a = response.status,
+                        "result_code"_a = response.result_code);
+                });
 
     bind_receiver_lora(client);
     bind_receiver_gfsk(client);

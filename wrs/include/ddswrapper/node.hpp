@@ -27,7 +27,10 @@ public:
     // A Node owns exactly one participant. Its publishers, subscribers, clients,
     // and services are always created with that participant, never the legacy
     // default participant maintained by ddsWrapperInit().
-    explicit Node(int domain_id = -1) : context_(get_global_default_context()), domain_id_(domain_id) { init(); }
+    explicit Node(int domain_id = -1)
+    : context_(get_global_default_context()), domain_id_(domain_id) {
+        init();
+    }
 
     ~Node() { shutdown(); }
 
@@ -82,9 +85,9 @@ private:
             throw std::runtime_error("[ddswrapper::Node] invalid context");
         }
 
-        participant_ = domain_id_ >= 0
-                           ? createDomainParticipantWithId(context_->profile_path().c_str(), domain_id_)
-                           : createDomainParticipant(context_->profile_path().c_str());
+        participant_ = domain_id_ >= 0 ? createDomainParticipantWithId(
+                                             context_->profile_path().c_str(), domain_id_)
+                                       : createDomainParticipant(context_->profile_path().c_str());
         if (!participant_) {
             throw std::runtime_error("[ddswrapper::Node] failed to create participant");
         }
