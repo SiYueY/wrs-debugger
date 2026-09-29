@@ -18,7 +18,7 @@ constexpr int kClosedFd = -1;
 constexpr long kNanosecondsPerSecond = 1'000'000'000L;
 
 template <typename T>
-using Result = hardware::Result<T, Error>;
+using Result = wrs::Result<T, Error>;
 
 enum class ErrorContext { Open, Runtime };
 enum class TransferMode { Wait, Immediate };
@@ -506,7 +506,7 @@ Port::Port(Port&& other) noexcept : fd_(other.fd_), rts_automatic_(other.rts_aut
 
 bool Port::is_open() const noexcept { return fd_ >= 0; }
 
-hardware::Result<void, Error> Port::open(const std::string& path, const Config& config) noexcept {
+wrs::Result<void, Error> Port::open(const std::string& path, const Config& config) noexcept {
     if (is_open()) return Result<void>::failure(Error::AlreadyOpen);
     if (path.empty() || path.find('\0') != std::string::npos) {
         return Result<void>::failure(Error::InvalidArgument);
@@ -610,7 +610,7 @@ hardware::Result<void, Error> Port::open(const std::string& path, const Config& 
     return Result<void>::success();
 }
 
-hardware::Result<void, Error> Port::close() noexcept {
+wrs::Result<void, Error> Port::close() noexcept {
     if (!is_open()) return Result<void>::success();
 
     const int closing = fd_;
@@ -629,11 +629,11 @@ hardware::Result<void, Error> Port::close() noexcept {
     return Result<void>::success();
 }
 
-hardware::Result<std::size_t, Error> Port::read(std::byte* data, std::size_t size) noexcept {
+wrs::Result<std::size_t, Error> Port::read(std::byte* data, std::size_t size) noexcept {
     return read_transfer(fd_, data, size, nullptr, TransferMode::Wait);
 }
 
-hardware::Result<std::size_t, Error> Port::read(
+wrs::Result<std::size_t, Error> Port::read(
     std::byte* data, std::size_t size, std::chrono::nanoseconds timeout) noexcept {
     if (!is_open()) return Result<std::size_t>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
@@ -641,15 +641,15 @@ hardware::Result<std::size_t, Error> Port::read(
     return read_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
 }
 
-hardware::Result<std::size_t, Error> Port::try_read(std::byte* data, std::size_t size) noexcept {
+wrs::Result<std::size_t, Error> Port::try_read(std::byte* data, std::size_t size) noexcept {
     return read_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
 }
 
-hardware::Result<std::size_t, Error> Port::write(const std::byte* data, std::size_t size) noexcept {
+wrs::Result<std::size_t, Error> Port::write(const std::byte* data, std::size_t size) noexcept {
     return write_transfer(fd_, data, size, nullptr, TransferMode::Wait);
 }
 
-hardware::Result<std::size_t, Error> Port::write(
+wrs::Result<std::size_t, Error> Port::write(
     const std::byte* data, std::size_t size, std::chrono::nanoseconds timeout) noexcept {
     if (!is_open()) return Result<std::size_t>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
@@ -657,26 +657,26 @@ hardware::Result<std::size_t, Error> Port::write(
     return write_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
 }
 
-hardware::Result<std::size_t, Error> Port::try_write(
+wrs::Result<std::size_t, Error> Port::try_write(
     const std::byte* data, std::size_t size) noexcept {
     return write_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
 }
 
-hardware::Result<void, Error> Port::wait_readable(std::chrono::nanoseconds timeout) noexcept {
+wrs::Result<void, Error> Port::wait_readable(std::chrono::nanoseconds timeout) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
     if (!deadline) return Result<void>::failure(deadline.error());
     return wait_fd(fd_, POLLIN, &deadline.value());
 }
 
-hardware::Result<void, Error> Port::wait_writable(std::chrono::nanoseconds timeout) noexcept {
+wrs::Result<void, Error> Port::wait_writable(std::chrono::nanoseconds timeout) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
     if (!deadline) return Result<void>::failure(deadline.error());
     return wait_fd(fd_, POLLOUT, &deadline.value());
 }
 
-hardware::Result<std::size_t, Error> Port::bytes_available() const noexcept {
+wrs::Result<std::size_t, Error> Port::bytes_available() const noexcept {
     if (!is_open()) return Result<std::size_t>::failure(Error::NotOpen);
 
     int value = 0;
@@ -688,7 +688,7 @@ hardware::Result<std::size_t, Error> Port::bytes_available() const noexcept {
     return Result<std::size_t>::success(static_cast<std::size_t>(value));
 }
 
-hardware::Result<std::size_t, Error> Port::bytes_pending() const noexcept {
+wrs::Result<std::size_t, Error> Port::bytes_pending() const noexcept {
     if (!is_open()) return Result<std::size_t>::failure(Error::NotOpen);
 
     int value = 0;
@@ -700,7 +700,7 @@ hardware::Result<std::size_t, Error> Port::bytes_pending() const noexcept {
     return Result<std::size_t>::success(static_cast<std::size_t>(value));
 }
 
-hardware::Result<void, Error> Port::discard_input() noexcept {
+wrs::Result<void, Error> Port::discard_input() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (tty::discard(fd_, TCIFLUSH) < 0) {
         const int err = errno;
@@ -709,7 +709,7 @@ hardware::Result<void, Error> Port::discard_input() noexcept {
     return Result<void>::success();
 }
 
-hardware::Result<void, Error> Port::discard_output() noexcept {
+wrs::Result<void, Error> Port::discard_output() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (tty::discard(fd_, TCOFLUSH) < 0) {
         const int err = errno;
@@ -718,7 +718,7 @@ hardware::Result<void, Error> Port::discard_output() noexcept {
     return Result<void>::success();
 }
 
-hardware::Result<void, Error> Port::discard_buffers() noexcept {
+wrs::Result<void, Error> Port::discard_buffers() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (tty::discard(fd_, TCIOFLUSH) < 0) {
         const int err = errno;
@@ -727,7 +727,7 @@ hardware::Result<void, Error> Port::discard_buffers() noexcept {
     return Result<void>::success();
 }
 
-hardware::Result<void, Error> Port::drain() noexcept {
+wrs::Result<void, Error> Port::drain() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
 
     for (;;) {
@@ -738,7 +738,7 @@ hardware::Result<void, Error> Port::drain() noexcept {
     }
 }
 
-hardware::Result<void, Error> Port::set_rts(bool asserted) noexcept {
+wrs::Result<void, Error> Port::set_rts(bool asserted) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (rts_automatic_) return Result<void>::failure(Error::InvalidState);
 
@@ -749,9 +749,9 @@ hardware::Result<void, Error> Port::set_rts(bool asserted) noexcept {
     return Result<void>::success();
 }
 
-hardware::Result<bool, Error> Port::rts() const noexcept { return read_modem_line(fd_, TIOCM_RTS); }
+wrs::Result<bool, Error> Port::rts() const noexcept { return read_modem_line(fd_, TIOCM_RTS); }
 
-hardware::Result<void, Error> Port::set_dtr(bool asserted) noexcept {
+wrs::Result<void, Error> Port::set_dtr(bool asserted) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
 
     if (tty::write_modem_line(fd_, TIOCM_DTR, asserted) < 0) {
@@ -761,17 +761,17 @@ hardware::Result<void, Error> Port::set_dtr(bool asserted) noexcept {
     return Result<void>::success();
 }
 
-hardware::Result<bool, Error> Port::dtr() const noexcept { return read_modem_line(fd_, TIOCM_DTR); }
+wrs::Result<bool, Error> Port::dtr() const noexcept { return read_modem_line(fd_, TIOCM_DTR); }
 
-hardware::Result<bool, Error> Port::cts() const noexcept { return read_modem_line(fd_, TIOCM_CTS); }
+wrs::Result<bool, Error> Port::cts() const noexcept { return read_modem_line(fd_, TIOCM_CTS); }
 
-hardware::Result<bool, Error> Port::dsr() const noexcept { return read_modem_line(fd_, TIOCM_DSR); }
+wrs::Result<bool, Error> Port::dsr() const noexcept { return read_modem_line(fd_, TIOCM_DSR); }
 
-hardware::Result<bool, Error> Port::ri() const noexcept { return read_modem_line(fd_, TIOCM_RI); }
+wrs::Result<bool, Error> Port::ri() const noexcept { return read_modem_line(fd_, TIOCM_RI); }
 
-hardware::Result<bool, Error> Port::dcd() const noexcept { return read_modem_line(fd_, TIOCM_CAR); }
+wrs::Result<bool, Error> Port::dcd() const noexcept { return read_modem_line(fd_, TIOCM_CAR); }
 
-hardware::Result<void, Error> Port::set_break(bool asserted) noexcept {
+wrs::Result<void, Error> Port::set_break(bool asserted) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
 
     if (tty::write_break(fd_, asserted) < 0) {

@@ -10,6 +10,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <serial/tool.hpp>
 #include <transmitter/client.hpp>
 
 namespace py = pybind11;
@@ -23,12 +24,12 @@ namespace {
 }
 
 template <typename T>
-T unwrap(hardware::Result<T, transmitter::Error>&& result) {
+T unwrap(wrs::Result<T, transmitter::Error>&& result) {
     if (!result) fail(result.error());
     return std::move(result.value());
 }
 
-void unwrap(hardware::Result<void, transmitter::Error>&& result) {
+void unwrap(wrs::Result<void, transmitter::Error>&& result) {
     if (!result) fail(result.error());
 }
 
@@ -154,6 +155,22 @@ void bind_transmitter_gfsk(py::class_<transmitter::Client>& client) {
 }
 
 void bind_transmitter(py::module_& module) {
+    module.def("list_serial_ports", [] {
+        const auto result = serial::list_ports();
+        if (!result) throw std::runtime_error("SERIAL_LIST_FAILED");
+        py::list ports;
+        for (const auto& port : result.value())
+            ports.append(py::dict(
+                "device"_a = port.path, "description"_a = port.description,
+                "manufacturer"_a = (port.usb.available ? port.usb.manufacturer : ""),
+                "product"_a = (port.usb.available ? port.usb.product : ""),
+                "serial_number"_a = (port.usb.available ? port.usb.serial_number : ""),
+                "vendor_id"_a = (port.usb.available ? py::cast(port.usb.vendor_id) : py::none()),
+                "product_id"_a =
+                    (port.usb.available ? py::cast(port.usb.product_id) : py::none())));
+        return ports;
+    });
+
     auto client = py::class_<transmitter::Client>(module, "TransmitterClient")
                       .def(py::init<>())
                       .def(

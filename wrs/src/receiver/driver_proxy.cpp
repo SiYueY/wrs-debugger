@@ -22,7 +22,7 @@
 
 namespace receiver {
 template <typename T>
-using Result = hardware::Result<T, Error>;
+using Result = wrs::Result<T, Error>;
 namespace dds = wireless_estop::srv::dds_;
 namespace msg = wireless_estop::msg::dds_;
 using BindingService = DDSWRAPPER_SERVICE(dds, GetEStopBindingState);

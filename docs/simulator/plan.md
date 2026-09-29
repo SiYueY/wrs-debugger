@@ -244,7 +244,7 @@ humanoid-driver
 禁止：
 
 ```cpp
-#include <hardware/result.hpp>
+#include <wrs/result.hpp>
 
 #include <serial/port.hpp>
 #include <serial/tool.hpp>
@@ -2881,7 +2881,7 @@ protocol invariants
 不要依赖：
 
 ```text
-hardware::Result
+wrs::Result
 ```
 
 Simulator 可以提供局部：
@@ -2908,7 +2908,7 @@ enum class Error : std::uint8_t {
 Result<T>
 ```
 
-但不要复制整个 `hardware::Result`。
+但不要复制整个 `wrs::Result`。
 
 也不要将其发展为仓库级公共库。
 

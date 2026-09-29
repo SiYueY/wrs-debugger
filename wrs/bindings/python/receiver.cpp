@@ -22,12 +22,12 @@ namespace {
 }
 
 template <typename T>
-T unwrap(hardware::Result<T, receiver::Error>&& result) {
+T unwrap(wrs::Result<T, receiver::Error>&& result) {
     if (!result) fail(result.error());
     return std::move(result.value());
 }
 
-void unwrap(hardware::Result<void, receiver::Error>&& result) {
+void unwrap(wrs::Result<void, receiver::Error>&& result) {
     if (!result) fail(result.error());
 }
 

@@ -6,7 +6,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace hardware {
+namespace wrs {
 
 /**
  * @brief Represents either a successful value or an error.
@@ -543,4 +543,4 @@ private:
     State state_;
 };
 
-}  // namespace hardware
+}  // namespace wrs

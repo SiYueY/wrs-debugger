@@ -272,7 +272,7 @@ Simulator 不得直接或者间接依赖 `wrs` 的源码或 CMake Target。
 禁止：
 
 ```cpp
-#include <hardware/result.hpp>
+#include <wrs/result.hpp>
 
 #include <serial/port.hpp>
 #include <serial/tool.hpp>
@@ -994,7 +994,7 @@ GLEW
 Simulator 不依赖：
 
 ```text
-hardware::Result
+wrs::Result
 ```
 
 提供局部、轻量错误模型。
@@ -1031,7 +1031,7 @@ class Result;
 异常不用于普通协议错误
 ```
 
-但不复制整个 `hardware::Result`，也不将该 Result 上升为仓库级公共组件。
+但不复制整个 `wrs::Result`，也不将该 Result 上升为仓库级公共组件。
 
 如果实际调用面证明：
 

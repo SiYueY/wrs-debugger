@@ -5,7 +5,7 @@
 namespace receiver {
 namespace {
 template <typename T>
-using Result = hardware::Result<T, Error>;
+using Result = wrs::Result<T, Error>;
 }
 
 Client::Client() noexcept : driver_(new DriverProxy()) {}

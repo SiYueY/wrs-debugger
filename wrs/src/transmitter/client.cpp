@@ -8,7 +8,7 @@ namespace transmitter {
 namespace {
 constexpr std::uint32_t kUpgradeRequestValue = 0x454e;
 template <typename T>
-using Result = hardware::Result<T, Error>;
+using Result = wrs::Result<T, Error>;
 
 Error to_error(serial::Error error) noexcept {
     switch (error) {
@@ -254,7 +254,7 @@ Client::Client(Client&& other) noexcept
     other.next_transaction_id_ = 1;
 }
 
-hardware::Result<void, Error> Client::open(
+wrs::Result<void, Error> Client::open(
     const std::string& path, std::chrono::milliseconds response_timeout,
     std::chrono::milliseconds retry_interval, std::uint8_t max_attempts) noexcept {
     if (is_open()) {
@@ -294,7 +294,7 @@ hardware::Result<void, Error> Client::open(
     return Result<void>::success();
 }
 
-hardware::Result<void, Error> Client::close() noexcept {
+wrs::Result<void, Error> Client::close() noexcept {
     identity_ = {};
     auto close_result = port_.close();
     return close_result ? Result<void>::success()
@@ -305,7 +305,7 @@ bool Client::is_open() const noexcept { return port_.is_open(); }
 
 const DeviceIdentity& Client::identity() const noexcept { return identity_; }
 
-hardware::Result<std::array<std::uint8_t, 3>, Error> Client::read_device_id() noexcept {
+wrs::Result<std::array<std::uint8_t, 3>, Error> Client::read_device_id() noexcept {
     if (!is_open()) return Result<std::array<std::uint8_t, 3>>::failure(Error::NotOpen);
     NormalFrame request{};
     request.cmd = static_cast<std::uint8_t>(SystemCmd::NormalReq);
@@ -317,7 +317,7 @@ hardware::Result<std::array<std::uint8_t, 3>, Error> Client::read_device_id() no
     return Result<std::array<std::uint8_t, 3>>::success(frame.device_id);
 }
 
-hardware::Result<DeviceKeyFrame, Error> Client::prepare_binding() noexcept {
+wrs::Result<DeviceKeyFrame, Error> Client::prepare_binding() noexcept {
     if (!is_open()) return Result<DeviceKeyFrame>::failure(Error::NotOpen);
     DeviceKeyFrame request{};
     request.cmd = static_cast<std::uint8_t>(SystemCmd::BindReq);
@@ -331,7 +331,7 @@ hardware::Result<DeviceKeyFrame, Error> Client::prepare_binding() noexcept {
     return Result<DeviceKeyFrame>::success(std::move(frame));
 }
 
-hardware::Result<void, Error> Client::find_binding(const DeviceKeyFrame& binding) noexcept {
+wrs::Result<void, Error> Client::find_binding(const DeviceKeyFrame& binding) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (binding.transaction_id == 0 || binding.device_id == std::array<std::uint8_t, 3>{})
         return Result<void>::failure(Error::InvalidArgument);
@@ -348,7 +348,7 @@ hardware::Result<void, Error> Client::find_binding(const DeviceKeyFrame& binding
                : Result<void>::failure(Error::InvalidResponse);
 }
 
-hardware::Result<void, Error> Client::cancel_binding(const DeviceKeyFrame& binding) noexcept {
+wrs::Result<void, Error> Client::cancel_binding(const DeviceKeyFrame& binding) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (binding.transaction_id == 0 || binding.device_id == std::array<std::uint8_t, 3>{})
         return Result<void>::failure(Error::InvalidArgument);
@@ -369,7 +369,7 @@ std::uint32_t Client::next_transaction() noexcept {
     return value == 0 ? next_transaction() : value;
 }
 
-hardware::Result<Bytes, Error> Client::exchange(
+wrs::Result<Bytes, Error> Client::exchange(
     const Bytes& request, std::uint32_t transaction_id, SystemCmd expected_command) noexcept {
     if (!is_open()) {
         return Result<Bytes>::failure(Error::NotOpen);
@@ -445,7 +445,7 @@ hardware::Result<Bytes, Error> Client::exchange(
     return Result<Bytes>::failure(Error::TimedOut);
 }
 
-hardware::Result<SdoFrame, Error> Client::read_sdo(std::uint16_t object_address) noexcept {
+wrs::Result<SdoFrame, Error> Client::read_sdo(std::uint16_t object_address) noexcept {
     if (!is_open()) return Result<SdoFrame>::failure(Error::NotOpen);
     if ((object_address & 0xf000U) != 0U) return Result<SdoFrame>::failure(Error::InvalidArgument);
     SdoFrame request{};
@@ -463,11 +463,11 @@ hardware::Result<SdoFrame, Error> Client::read_sdo(std::uint16_t object_address)
     return Result<SdoFrame>::success(frame);
 }
 
-hardware::Result<SdoFrame, Error> Client::read_sdo(SdoObject object) noexcept {
+wrs::Result<SdoFrame, Error> Client::read_sdo(SdoObject object) noexcept {
     return read_sdo(static_cast<std::uint16_t>(object));
 }
 
-hardware::Result<void, Error> Client::write_sdo(const SdoFrame& request_frame) noexcept {
+wrs::Result<void, Error> Client::write_sdo(const SdoFrame& request_frame) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if ((request_frame.object_index & 0x0fff) !=
             static_cast<std::uint16_t>(SdoObject::UpgradeRequest) ||
@@ -489,7 +489,7 @@ hardware::Result<void, Error> Client::write_sdo(const SdoFrame& request_frame) n
                : Result<void>::failure(sdo_status_error(status));
 }
 
-hardware::Result<LoRaParamFrame, Error> Client::read_lora_parameters() noexcept {
+wrs::Result<LoRaParamFrame, Error> Client::read_lora_parameters() noexcept {
     if (!is_open()) return Result<LoRaParamFrame>::failure(Error::NotOpen);
     LoRaParamFrame request{};
     request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadReq);
@@ -502,7 +502,7 @@ hardware::Result<LoRaParamFrame, Error> Client::read_lora_parameters() noexcept 
     return Result<LoRaParamFrame>::success(frame);
 }
 
-hardware::Result<GfskParamFrame, Error> Client::read_gfsk_parameters() noexcept {
+wrs::Result<GfskParamFrame, Error> Client::read_gfsk_parameters() noexcept {
     if (!is_open()) return Result<GfskParamFrame>::failure(Error::NotOpen);
     GfskParamFrame request{};
     request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadReq);
@@ -517,7 +517,7 @@ hardware::Result<GfskParamFrame, Error> Client::read_gfsk_parameters() noexcept 
     return Result<GfskParamFrame>::success(frame);
 }
 
-hardware::Result<void, Error> Client::write_lora_parameters(
+wrs::Result<void, Error> Client::write_lora_parameters(
     const LoRaParamFrame& parameter_frame) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (!valid_lora_parameters(parameter_frame))
@@ -535,7 +535,7 @@ hardware::Result<void, Error> Client::write_lora_parameters(
                : Result<void>::failure(Error::InvalidResponse);
 }
 
-hardware::Result<void, Error> Client::write_gfsk_parameters(
+wrs::Result<void, Error> Client::write_gfsk_parameters(
     const GfskParamFrame& parameter_frame) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (!valid_gfsk_parameters(parameter_frame))
@@ -553,12 +553,12 @@ hardware::Result<void, Error> Client::write_gfsk_parameters(
                : Result<void>::failure(Error::InvalidResponse);
 }
 
-hardware::Result<void, Error> Client::restore_default_parameters(RadioType type) noexcept {
+wrs::Result<void, Error> Client::restore_default_parameters(RadioType type) noexcept {
     return type == RadioType::LoRa ? write_lora_parameters(default_lora_frame())
                                    : write_gfsk_parameters(default_gfsk_frame());
 }
 
-hardware::Result<PinFrame, Error> Client::read_pin() noexcept {
+wrs::Result<PinFrame, Error> Client::read_pin() noexcept {
     if (!is_open()) return Result<PinFrame>::failure(Error::NotOpen);
     PinFrame request{};
     request.cmd = static_cast<std::uint8_t>(SystemCmd::PinCfgReq);
@@ -573,7 +573,7 @@ hardware::Result<PinFrame, Error> Client::read_pin() noexcept {
     return Result<PinFrame>::success(frame);
 }
 
-hardware::Result<void, Error> Client::write_pin(const PinFrame& pin_frame) noexcept {
+wrs::Result<void, Error> Client::write_pin(const PinFrame& pin_frame) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (!valid_pin(pin_frame) || all_zero_pin(pin_frame) || pin_frame.result_code != 0 ||
         !is_zero(pin_frame.reserved1.data(), pin_frame.reserved1.size()) ||

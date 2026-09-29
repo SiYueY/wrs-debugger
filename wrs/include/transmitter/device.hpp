@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include <hardware/result.hpp>
+#include <wrs/result.hpp>
 #include <transmitter/error.hpp>
 
 namespace transmitter {
@@ -32,7 +32,7 @@ struct DeviceInfo final {
     DeviceIdentity identity{};
 };
 /** @brief Finds all candidates that pass the three read-only identity probes. */
-[[nodiscard]] hardware::Result<std::vector<DeviceInfo>, Error> discover(
+[[nodiscard]] wrs::Result<std::vector<DeviceInfo>, Error> discover(
     std::chrono::milliseconds response_timeout, std::chrono::milliseconds retry_interval,
     std::uint8_t max_attempts) noexcept;
 }  // namespace transmitter

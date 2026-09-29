@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include <hardware/result.hpp>
+#include <wrs/result.hpp>
 #include <serial/error.hpp>
 
 namespace serial {
@@ -42,6 +42,6 @@ struct PortInfo final {
  *
  * @return Discovered ports sorted by device path, or a Serial error.
  */
-[[nodiscard]] hardware::Result<std::vector<PortInfo>, Error> list_ports() noexcept;
+[[nodiscard]] wrs::Result<std::vector<PortInfo>, Error> list_ports() noexcept;
 
 }  // namespace serial

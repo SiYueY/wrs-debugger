@@ -8,7 +8,7 @@
 
 namespace transmitter_simulator {
 
-/** Inline, allocation-free success-or-error value; mirrors hardware::Result semantics. */
+/** Inline, allocation-free success-or-error value; mirrors wrs::Result semantics. */
 template <typename T, typename E>
 class [[nodiscard]] Result final {
     static_assert(!std::is_void_v<T> && std::is_object_v<T> && std::is_object_v<E>);

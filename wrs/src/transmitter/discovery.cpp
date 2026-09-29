@@ -5,12 +5,12 @@
 #include <serial/tool.hpp>
 
 namespace transmitter {
-hardware::Result<std::vector<DeviceInfo>, Error> discover(
+wrs::Result<std::vector<DeviceInfo>, Error> discover(
     std::chrono::milliseconds response_timeout, std::chrono::milliseconds retry_interval,
     std::uint8_t max_attempts) noexcept {
     auto ports = serial::list_ports();
     if (!ports) {
-        return hardware::Result<std::vector<DeviceInfo>, Error>::failure(Error::Io);
+        return wrs::Result<std::vector<DeviceInfo>, Error>::failure(Error::Io);
     }
     try {
         std::vector<DeviceInfo> devices;
@@ -32,9 +32,9 @@ hardware::Result<std::vector<DeviceInfo>, Error> discover(
             info.identity = client.identity();
             devices.push_back(std::move(info));
         }
-        return hardware::Result<std::vector<DeviceInfo>, Error>::success(std::move(devices));
+        return wrs::Result<std::vector<DeviceInfo>, Error>::success(std::move(devices));
     } catch (const std::bad_alloc&) {
-        return hardware::Result<std::vector<DeviceInfo>, Error>::failure(Error::Io);
+        return wrs::Result<std::vector<DeviceInfo>, Error>::failure(Error::Io);
     }
 }
 }  // namespace transmitter

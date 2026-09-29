@@ -63,12 +63,12 @@ void enrich_usb(const fs::path& device, PortInfo& info) {
 
 }  // namespace
 
-hardware::Result<std::vector<PortInfo>, Error> list_ports() noexcept {
+wrs::Result<std::vector<PortInfo>, Error> list_ports() noexcept {
     try {
         std::vector<PortInfo> ports;
         std::error_code error;
         fs::directory_iterator iterator("/sys/class/tty", error);
-        if (error) return hardware::Result<std::vector<PortInfo>, Error>::failure(Error::Io);
+        if (error) return wrs::Result<std::vector<PortInfo>, Error>::failure(Error::Io);
 
         for (const auto& entry : iterator) {
             const auto device = entry.path() / "device";
@@ -115,13 +115,13 @@ hardware::Result<std::vector<PortInfo>, Error> list_ports() noexcept {
         std::sort(ports.begin(), ports.end(), [](const PortInfo& left, const PortInfo& right) {
             return left.path < right.path;
         });
-        return hardware::Result<std::vector<PortInfo>, Error>::success(std::move(ports));
+        return wrs::Result<std::vector<PortInfo>, Error>::success(std::move(ports));
     } catch (const std::bad_alloc&) {
-        return hardware::Result<std::vector<PortInfo>, Error>::failure(Error::OutOfMemory);
+        return wrs::Result<std::vector<PortInfo>, Error>::failure(Error::OutOfMemory);
     } catch (const std::length_error&) {
-        return hardware::Result<std::vector<PortInfo>, Error>::failure(Error::OutOfMemory);
+        return wrs::Result<std::vector<PortInfo>, Error>::failure(Error::OutOfMemory);
     } catch (const fs::filesystem_error&) {
-        return hardware::Result<std::vector<PortInfo>, Error>::failure(Error::Io);
+        return wrs::Result<std::vector<PortInfo>, Error>::failure(Error::Io);
     }
 }
 

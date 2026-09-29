@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <string>
 
-#include <hardware/result.hpp>
+#include <wrs/result.hpp>
 #include <serial/config.hpp>
 #include <serial/error.hpp>
 
@@ -64,7 +64,7 @@ public:
      *         a Serial error.
      * @pre This Port is closed.
      */
-    [[nodiscard]] hardware::Result<void, Error> open(
+    [[nodiscard]] wrs::Result<void, Error> open(
         const std::string& path, const Config& config) noexcept;
 
     /**
@@ -77,7 +77,7 @@ public:
      * @return Success when no close operation fails; otherwise a Serial error
      *         after the Port has become closed.
      */
-    [[nodiscard]] hardware::Result<void, Error> close() noexcept;
+    [[nodiscard]] wrs::Result<void, Error> close() noexcept;
 
     /**
      * @brief Reports whether this Port owns an open TTY.
@@ -97,7 +97,7 @@ public:
      * @return The bytes read, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> read(
+    [[nodiscard]] wrs::Result<std::size_t, Error> read(
         std::byte* data, std::size_t size) noexcept;
 
     /**
@@ -112,7 +112,7 @@ public:
      * @return The bytes accepted, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> write(
+    [[nodiscard]] wrs::Result<std::size_t, Error> write(
         const std::byte* data, std::size_t size) noexcept;
 
     /**
@@ -129,7 +129,7 @@ public:
      * @return The bytes read, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> read(
+    [[nodiscard]] wrs::Result<std::size_t, Error> read(
         std::byte* data, std::size_t size, std::chrono::nanoseconds timeout) noexcept;
 
     /**
@@ -146,7 +146,7 @@ public:
      * @return The bytes accepted, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> write(
+    [[nodiscard]] wrs::Result<std::size_t, Error> write(
         const std::byte* data, std::size_t size, std::chrono::nanoseconds timeout) noexcept;
 
     /**
@@ -158,7 +158,7 @@ public:
      *         possible, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> try_read(
+    [[nodiscard]] wrs::Result<std::size_t, Error> try_read(
         std::byte* data, std::size_t size) noexcept;
 
     /**
@@ -170,7 +170,7 @@ public:
      *         is possible, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> try_write(
+    [[nodiscard]] wrs::Result<std::size_t, Error> try_write(
         const std::byte* data, std::size_t size) noexcept;
 
     /**
@@ -184,7 +184,7 @@ public:
      *         the deadline, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> wait_readable(
+    [[nodiscard]] wrs::Result<void, Error> wait_readable(
         std::chrono::nanoseconds timeout) noexcept;
 
     /**
@@ -198,7 +198,7 @@ public:
      *         the deadline, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> wait_writable(
+    [[nodiscard]] wrs::Result<void, Error> wait_writable(
         std::chrono::nanoseconds timeout) noexcept;
 
     /**
@@ -207,7 +207,7 @@ public:
      * @return Input-queue size, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> bytes_available() const noexcept;
+    [[nodiscard]] wrs::Result<std::size_t, Error> bytes_available() const noexcept;
 
     /**
      * @brief Returns a snapshot of bytes currently queued for output.
@@ -215,7 +215,7 @@ public:
      * @return Output-queue size, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<std::size_t, Error> bytes_pending() const noexcept;
+    [[nodiscard]] wrs::Result<std::size_t, Error> bytes_pending() const noexcept;
 
     /**
      * @brief Destructively discards queued input.
@@ -223,7 +223,7 @@ public:
      * @return Success, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> discard_input() noexcept;
+    [[nodiscard]] wrs::Result<void, Error> discard_input() noexcept;
 
     /**
      * @brief Destructively discards queued output.
@@ -231,7 +231,7 @@ public:
      * @return Success, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> discard_output() noexcept;
+    [[nodiscard]] wrs::Result<void, Error> discard_output() noexcept;
 
     /**
      * @brief Destructively discards queued input and output.
@@ -239,7 +239,7 @@ public:
      * @return Success, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> discard_buffers() noexcept;
+    [[nodiscard]] wrs::Result<void, Error> discard_buffers() noexcept;
 
     /**
      * @brief Waits for previously accepted output to complete transmission.
@@ -249,7 +249,7 @@ public:
      * @return Success, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> drain() noexcept;
+    [[nodiscard]] wrs::Result<void, Error> drain() noexcept;
 
     /**
      * @brief Sets the RTS output state.
@@ -259,7 +259,7 @@ public:
      *         automatically owns RTS, or another Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> set_rts(bool asserted) noexcept;
+    [[nodiscard]] wrs::Result<void, Error> set_rts(bool asserted) noexcept;
 
     /**
      * @brief Reads the current RTS output state.
@@ -267,7 +267,7 @@ public:
      * @return true when RTS is asserted, false when cleared, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<bool, Error> rts() const noexcept;
+    [[nodiscard]] wrs::Result<bool, Error> rts() const noexcept;
 
     /**
      * @brief Sets the DTR output state.
@@ -276,7 +276,7 @@ public:
      * @return Success, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> set_dtr(bool asserted) noexcept;
+    [[nodiscard]] wrs::Result<void, Error> set_dtr(bool asserted) noexcept;
 
     /**
      * @brief Reads the current DTR output state.
@@ -284,7 +284,7 @@ public:
      * @return true when DTR is asserted, false when cleared, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<bool, Error> dtr() const noexcept;
+    [[nodiscard]] wrs::Result<bool, Error> dtr() const noexcept;
 
     /**
      * @brief Reads the current CTS input state.
@@ -292,7 +292,7 @@ public:
      * @return true when CTS is asserted, false when cleared, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<bool, Error> cts() const noexcept;
+    [[nodiscard]] wrs::Result<bool, Error> cts() const noexcept;
 
     /**
      * @brief Reads the current DSR input state.
@@ -300,7 +300,7 @@ public:
      * @return true when DSR is asserted, false when cleared, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<bool, Error> dsr() const noexcept;
+    [[nodiscard]] wrs::Result<bool, Error> dsr() const noexcept;
 
     /**
      * @brief Reads the current RI input state.
@@ -308,7 +308,7 @@ public:
      * @return true when RI is asserted, false when cleared, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<bool, Error> ri() const noexcept;
+    [[nodiscard]] wrs::Result<bool, Error> ri() const noexcept;
 
     /**
      * @brief Reads the current DCD input state.
@@ -316,7 +316,7 @@ public:
      * @return true when DCD is asserted, false when cleared, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<bool, Error> dcd() const noexcept;
+    [[nodiscard]] wrs::Result<bool, Error> dcd() const noexcept;
 
     /**
      * @brief Asserts or clears BREAK without adding an internal delay.
@@ -325,7 +325,7 @@ public:
      * @return Success, or a Serial error.
      * @pre The Port is open.
      */
-    [[nodiscard]] hardware::Result<void, Error> set_break(bool asserted) noexcept;
+    [[nodiscard]] wrs::Result<void, Error> set_break(bool asserted) noexcept;
 
 private:
     int fd_{-1};
