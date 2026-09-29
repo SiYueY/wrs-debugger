@@ -40,26 +40,31 @@ bool ParamFlags::from_raw(std::uint16_t raw, ParamFlags& flags) noexcept {
     return true;
 }
 
-bool valid(const LoRaParameters& p) noexcept {
+bool valid(const LoRaParameters& parameters) noexcept {
     return valid_common(
-               p.param_flags, RadioType::LoRa, p.tx_power, p.payload_len, p.rssi_threshold,
-               p.heartbeat_interval, p.heartbeat_loss) &&
-           p.bandwidth <= 2 && p.spreading_factor >= 5 && p.spreading_factor <= 12 &&
-           p.coding_rate <= 6 && p.header_type <= 1 && p.preamble_len >= 10 &&
-           p.preamble_len <= 50 &&
-           ((p.spreading_factor != 5 && p.spreading_factor != 6) || p.preamble_len == 12) &&
-           (p.sync_word & 0x0f0fU) == 0x0404U;
+               parameters.param_flags, RadioType::LoRa, parameters.tx_power, parameters.payload_len,
+               parameters.rssi_threshold, parameters.heartbeat_interval,
+               parameters.heartbeat_loss) &&
+           parameters.bandwidth <= 2 && parameters.spreading_factor >= 5 &&
+           parameters.spreading_factor <= 12 && parameters.coding_rate <= 6 &&
+           parameters.header_type <= 1 && parameters.preamble_len >= 10 &&
+           parameters.preamble_len <= 50 &&
+           ((parameters.spreading_factor != 5 && parameters.spreading_factor != 6) ||
+            parameters.preamble_len == 12) &&
+           (parameters.sync_word & 0x0f0fU) == 0x0404U;
 }
 
-bool valid(const GfskParameters& p) noexcept {
+bool valid(const GfskParameters& parameters) noexcept {
     return valid_common(
-               p.param_flags, RadioType::Gfsk, p.tx_power, p.payload_len, p.rssi_threshold,
-               p.heartbeat_interval, p.heartbeat_loss) &&
-           p.bandwidth <= 2 && p.bitrate >= 600 && p.bitrate <= 150000 && p.freq_deviation >= 600 &&
-           p.freq_deviation <= 300000 &&
-           static_cast<std::uint64_t>(p.freq_deviation) * 4U >= p.bitrate &&
-           (p.pulse_shaping == 0 || (p.pulse_shaping >= 0x08 && p.pulse_shaping <= 0x0b)) &&
-           p.preamble_len >= 16;
+               parameters.param_flags, RadioType::Gfsk, parameters.tx_power, parameters.payload_len,
+               parameters.rssi_threshold, parameters.heartbeat_interval,
+               parameters.heartbeat_loss) &&
+           parameters.bandwidth <= 2 && parameters.bitrate >= 600 && parameters.bitrate <= 150000 &&
+           parameters.freq_deviation >= 600 && parameters.freq_deviation <= 300000 &&
+           static_cast<std::uint64_t>(parameters.freq_deviation) * 4U >= parameters.bitrate &&
+           (parameters.pulse_shaping == 0 ||
+            (parameters.pulse_shaping >= 0x08 && parameters.pulse_shaping <= 0x0b)) &&
+           parameters.preamble_len >= 16;
 }
 
 LoRaParameters default_lora_parameters() noexcept {
@@ -70,4 +75,14 @@ GfskParameters default_gfsk_parameters() noexcept {
     return {0x4000, 10, 250, 12, 110, 200, 3, 1, 50000, 25000, 9, 16, 0x1424};
 }
 
+bool same_parameters(const LoRaParameters& left, const LoRaParameters& right) noexcept {
+    return left.param_flags == right.param_flags && left.tx_power == right.tx_power &&
+           left.freq_offset == right.freq_offset && left.payload_len == right.payload_len &&
+           left.rssi_threshold == right.rssi_threshold &&
+           left.heartbeat_interval == right.heartbeat_interval &&
+           left.heartbeat_loss == right.heartbeat_loss && left.bandwidth == right.bandwidth &&
+           left.spreading_factor == right.spreading_factor &&
+           left.coding_rate == right.coding_rate && left.header_type == right.header_type &&
+           left.preamble_len == right.preamble_len && left.sync_word == right.sync_word;
+}
 }  // namespace receiver

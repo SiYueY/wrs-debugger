@@ -21,6 +21,7 @@ enum class Error : std::uint8_t {
     InProgress,
     ExecutionError,
     InvalidCommand,
+    Unsupported,
 };
 
 }  // namespace receiver

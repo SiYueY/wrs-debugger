@@ -1,6 +1,7 @@
 """Native transmitter gateway backed by the C++ pybind11 extension."""
 
 from typing import Any, Never
+from uuid import uuid4
 
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.base import BindingHandle, WrsGateway
@@ -38,7 +39,11 @@ _ERRORS: dict[str, tuple[str, int, str]] = {
     ),
     "TRANSMITTER_16": ("TRANSMITTER_REJECTED", 502, "The transmitter rejected the request."),
     "TRANSMITTER_17": ("SDO_NOT_RECEIVED", 502, "The transmitter did not receive the SDO request."),
-    "TRANSMITTER_18": ("SDO_IN_PROGRESS", 409, "The transmitter is still processing the SDO request."),
+    "TRANSMITTER_18": (
+        "SDO_IN_PROGRESS",
+        409,
+        "The transmitter is still processing the SDO request.",
+    ),
     "TRANSMITTER_19": ("SDO_ERROR", 502, "The transmitter rejected the SDO operation."),
     "TRANSMITTER_20": ("SDO_INVALID_COMMAND", 422, "The transmitter rejected the SDO command."),
     "RECEIVER_0": ("RECEIVER_INVALID_PARAMETER", 422, "Receiver parameters are invalid."),
@@ -54,6 +59,11 @@ _ERRORS: dict[str, tuple[str, int, str]] = {
     "RECEIVER_12": ("RECEIVER_IN_PROGRESS", 409, "The receiver is still processing the request."),
     "RECEIVER_13": ("RECEIVER_EXECUTION_ERROR", 502, "The receiver failed to execute the request."),
     "RECEIVER_14": ("RECEIVER_INVALID_COMMAND", 422, "The receiver rejected the command."),
+    "RECEIVER_15": (
+        "RECEIVER_UNSUPPORTED",
+        501,
+        "The robot driver does not provide this receiver operation yet.",
+    ),
 }
 
 
@@ -66,7 +76,7 @@ def native_available() -> bool:
 
 
 class PybindWrsGateway:
-    """Production gateway. Receiver operations are explicitly unavailable in V1."""
+    """Production gateway for serial transmitter and DDS receiver operations."""
 
     def __init__(self) -> None:
         try:
@@ -139,9 +149,7 @@ class PybindWrsGateway:
 
     def write_transmitter_sdo(self, object_address: int, object_data: int) -> SdoResponse:
         self._call(lambda: self._client.write_sdo(object_address, object_data))
-        return SdoResponse(
-            object_address=object_address, object_data=0, status=0x6, result_code=0
-        )
+        return SdoResponse(object_address=object_address, object_data=0, status=0x6, result_code=0)
 
     def read_transmitter_info(self) -> TransmitterInfo:
         identity = self._call(self._client.identity)
@@ -197,14 +205,10 @@ class PybindWrsGateway:
         self._call_receiver_method("disconnect")
 
     def read_receiver_info(self) -> ReceiverInfo:
-        return ReceiverInfo.model_validate(
-            self._call_receiver_method("info")
-        )
+        return ReceiverInfo.model_validate(self._call_receiver_method("info"))
 
     def read_receiver_sdo(self, object_address: int) -> SdoResponse:
-        return SdoResponse.model_validate(
-            self._call_receiver_method("read_sdo", object_address)
-        )
+        return SdoResponse.model_validate(self._call_receiver_method("read_sdo", object_address))
 
     def write_receiver_sdo(self, object_address: int, object_data: int) -> SdoResponse:
         return SdoResponse.model_validate(
@@ -212,9 +216,7 @@ class PybindWrsGateway:
         )
 
     def read_receiver_lora_parameters(self) -> LoRaParameters:
-        return LoRaParameters.model_validate(
-            self._call_receiver_method("read_lora")
-        )
+        return LoRaParameters.model_validate(self._call_receiver_method("read_lora"))
 
     def write_receiver_lora_parameters(self, parameters: LoRaParameters) -> None:
         self._call_receiver_method("write_lora", parameters.model_dump())
@@ -223,9 +225,7 @@ class PybindWrsGateway:
         self._call_receiver_method("restore_lora")
 
     def read_receiver_gfsk_parameters(self) -> GfskParameters:
-        return GfskParameters.model_validate(
-            self._call_receiver_method("read_gfsk")
-        )
+        return GfskParameters.model_validate(self._call_receiver_method("read_gfsk"))
 
     def write_receiver_gfsk_parameters(self, parameters: GfskParameters) -> None:
         self._call_receiver_method("write_gfsk", parameters.model_dump())
@@ -234,16 +234,86 @@ class PybindWrsGateway:
         self._call_receiver_method("restore_gfsk")
 
     def prepare_transmitter_binding(self) -> BindingHandle:
-        self._receiver_unavailable()
+        context = self._call(self._client.prepare_binding)
+        device_id = context["device_id"]
+        key = context["kbind"]
+        transaction_id = context["transaction_id"]
+        if (
+            not isinstance(device_id, int)
+            or not 0 < device_id <= 0xFFFFFF
+            or not isinstance(key, bytes)
+            or len(key) != 16
+            or not isinstance(transaction_id, int)
+            or transaction_id == 0
+        ):
+            raise ApplicationError(
+                "BINDING_INVALID_RESPONSE",
+                502,
+                "Binding failed",
+                "Transmitter returned invalid binding material.",
+            )
+        return BindingHandle(
+            uuid4().hex, device_id=device_id, kbind=key, transaction_id=transaction_id
+        )
+
+    @staticmethod
+    def _binding_context(handle: BindingHandle) -> dict[str, object]:
+        if handle.device_id is None or handle.kbind is None or handle.transaction_id is None:
+            raise ApplicationError(
+                "BINDING_INVALID_CONTEXT",
+                500,
+                "Binding failed",
+                "Binding material is unavailable.",
+            )
+        return {
+            "device_id": handle.device_id,
+            "kbind": handle.kbind,
+            "transaction_id": handle.transaction_id,
+        }
 
     def prepare_receiver_binding(self, handle: BindingHandle) -> None:
-        self._receiver_unavailable()
+        context = self._binding_context(handle)
+        state = self._call_receiver_method("binding_state")
+        if state["bound"]:
+            raise ApplicationError(
+                "RECEIVER_ALREADY_BOUND",
+                409,
+                "Binding failed",
+                "Receiver is already bound; existing binding will not be replaced.",
+            )
+        # A timed-out DDS call may still have reached the receiver; never assume rollback is safe.
+        handle.receiver_prepared = True
+        self._call_receiver_method(
+            "start_binding",
+            context["device_id"],
+            context["kbind"],
+            context["transaction_id"],
+        )
 
     def verify_binding(self, handle: BindingHandle) -> None:
-        self._receiver_unavailable()
+        context = self._binding_context(handle)
+        self._call(lambda: self._client.find_binding(context))
+        state = self._call_receiver_method("binding_state")
+        if not state["bound"] or state["device_id"] != handle.device_id:
+            raise ApplicationError(
+                "BINDING_VERIFICATION_FAILED",
+                502,
+                "Binding failed",
+                "Wireless FIND completed but the receiver binding state did not match.",
+            )
+        handle.kbind = None
 
     def rollback_binding(self, handle: BindingHandle) -> None:
-        self._receiver_unavailable()
+        if handle.receiver_prepared:
+            handle.kbind = None
+            raise ApplicationError(
+                "BINDING_ROLLBACK_UNSUPPORTED",
+                502,
+                "Binding rollback unavailable",
+                "Receiver binding was prepared, but the current driver has no safe cancel service.",
+            )
+        self._call(lambda: self._client.cancel_binding(self._binding_context(handle)))
+        handle.kbind = None
 
 
 def pybind_gateway_contract(_: WrsGateway) -> None:

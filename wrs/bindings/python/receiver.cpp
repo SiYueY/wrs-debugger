@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdint>
@@ -156,14 +157,29 @@ void bind_receiver(py::module_& module) {
                                       bound ? py::cast(device_id_to_string(info.bound_device_id))
                                             : py::none());
                           })
+                      .def("binding_state", [](receiver::Client& value) {
+                          const auto state = unwrap(value.binding_state());
+                          return py::dict("bound"_a = state.bound,
+                                          "device_id"_a = state.device_id);
+                      })
+                      .def("start_binding", [](receiver::Client& value,
+                                                std::uint32_t device_id,
+                                                const py::bytes& key,
+                                                std::uint32_t transaction_id) {
+                          const std::string bytes = key;
+                          if (bytes.size() != 16) throw std::invalid_argument("Kbind must be 16 bytes");
+                          std::array<std::uint8_t, 16> kbind{};
+                          std::copy(bytes.begin(), bytes.end(), kbind.begin());
+                          unwrap(value.start_binding(device_id, kbind, transaction_id));
+                      })
                       .def(
                           "read_sdo",
                           [](receiver::Client& value, std::uint16_t address) {
                               const auto response = unwrap(value.read_sdo(address));
                               return py::dict(
-                                  "object_address"_a = (response.object_index & 0x0fffU),
+                                  "object_address"_a = response.object_address,
                                   "object_data"_a = response.object_data,
-                                  "status"_a = (response.object_index >> 12U),
+                                  "status"_a = response.status,
                                   "result_code"_a = response.result_code);
                           })
                       .def(
@@ -172,9 +188,9 @@ void bind_receiver(py::module_& module) {
                              std::uint32_t data) {
                               const auto response = unwrap(value.write_sdo(address, data));
                               return py::dict(
-                                  "object_address"_a = (response.object_index & 0x0fffU),
+                                  "object_address"_a = response.object_address,
                                   "object_data"_a = response.object_data,
-                                  "status"_a = (response.object_index >> 12U),
+                                  "status"_a = response.status,
                                   "result_code"_a = response.result_code);
                           });
 

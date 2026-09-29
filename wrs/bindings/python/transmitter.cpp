@@ -99,6 +99,20 @@ transmitter::GfskParamFrame from_transmitter_gfsk_param(const py::dict& dict) {
     value.sync_word = dict["sync_word"].cast<std::uint16_t>();
     return value;
 }
+transmitter::DeviceKeyFrame binding_frame(const py::dict& context) {
+    transmitter::DeviceKeyFrame frame{};
+    const auto device_id = context["device_id"].cast<std::uint32_t>();
+    const std::string key = context["kbind"].cast<std::string>();
+    if (device_id == 0 || device_id > 0xffffffU || key.size() != frame.kbind.size())
+        throw std::invalid_argument("Invalid binding context");
+    frame.device_id = {static_cast<std::uint8_t>(device_id >> 16),
+                       static_cast<std::uint8_t>(device_id >> 8),
+                       static_cast<std::uint8_t>(device_id)};
+    std::copy(key.begin(), key.end(), frame.kbind.begin());
+    frame.transaction_id = context["transaction_id"].cast<std::uint32_t>();
+    if (frame.transaction_id == 0) throw std::invalid_argument("Invalid binding transaction");
+    return frame;
+}
 }  // namespace
 
 void bind_transmitter_lora(py::class_<transmitter::Client>& client) {
@@ -166,6 +180,23 @@ void bind_transmitter(py::module_& module) {
                               if (device_id == std::array<std::uint8_t, 3>{}) return py::none();
                               return py::cast(device_id_to_string(device_id));
                           })
+                      .def("prepare_binding", [](transmitter::Client& value) {
+                          const auto frame = unwrap(value.prepare_binding());
+                          const auto device_id = (static_cast<std::uint32_t>(frame.device_id[0]) << 16) |
+                                                 (static_cast<std::uint32_t>(frame.device_id[1]) << 8) |
+                                                 frame.device_id[2];
+                          return py::dict("device_id"_a = device_id,
+                                          "kbind"_a = py::bytes(
+                                              reinterpret_cast<const char*>(frame.kbind.data()),
+                                              frame.kbind.size()),
+                                          "transaction_id"_a = frame.transaction_id);
+                      })
+                      .def("find_binding", [](transmitter::Client& value, const py::dict& context) {
+                          unwrap(value.find_binding(binding_frame(context)));
+                      })
+                      .def("cancel_binding", [](transmitter::Client& value, const py::dict& context) {
+                          unwrap(value.cancel_binding(binding_frame(context)));
+                      })
                       .def(
                           "read_pin",
                           [](transmitter::Client& value) {

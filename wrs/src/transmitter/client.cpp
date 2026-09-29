@@ -192,8 +192,10 @@ Error sdo_status_error(std::uint16_t status) noexcept {
 
 std::uint32_t response_transaction_id(const Bytes& bytes, SystemCmd expected) noexcept {
     if (expected == SystemCmd::NormalRsp) return 0;
-    return expected == SystemCmd::PinCfgRsp ? read_le32(bytes.bytes() + 12)
-                                            : read_le32(bytes.bytes() + 1);
+    if (expected == SystemCmd::PinCfgRsp) return read_le32(bytes.bytes() + 12);
+    if (expected == SystemCmd::BindRsp || expected == SystemCmd::FindRsp ||
+        expected == SystemCmd::UnbindRsp) return read_le32(bytes.bytes() + 20);
+    return read_le32(bytes.bytes() + 1);
 }
 
 LoRaParamFrame default_lora_frame() noexcept {
@@ -313,6 +315,50 @@ hardware::Result<std::array<std::uint8_t, 3>, Error> Client::read_device_id() no
     if (!is_zero(frame.reserved.data(), frame.reserved.size()))
         return Result<std::array<std::uint8_t, 3>>::failure(Error::InvalidResponse);
     return Result<std::array<std::uint8_t, 3>>::success(frame.device_id);
+}
+
+hardware::Result<DeviceKeyFrame, Error> Client::prepare_binding() noexcept {
+    if (!is_open()) return Result<DeviceKeyFrame>::failure(Error::NotOpen);
+    DeviceKeyFrame request{};
+    request.cmd = static_cast<std::uint8_t>(SystemCmd::BindReq);
+    request.transaction_id = next_transaction();
+    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::BindRsp);
+    if (!response) return Result<DeviceKeyFrame>::failure(response.error());
+    auto frame = DeviceKeyFrame::from_bytes(response.value());
+    if (frame.device_id == std::array<std::uint8_t, 3>{} ||
+        !is_zero(frame.reserved.data(), frame.reserved.size()))
+        return Result<DeviceKeyFrame>::failure(Error::InvalidResponse);
+    return Result<DeviceKeyFrame>::success(std::move(frame));
+}
+
+hardware::Result<void, Error> Client::find_binding(const DeviceKeyFrame& binding) noexcept {
+    if (!is_open()) return Result<void>::failure(Error::NotOpen);
+    if (binding.transaction_id == 0 || binding.device_id == std::array<std::uint8_t, 3>{})
+        return Result<void>::failure(Error::InvalidArgument);
+    DeviceKeyFrame request{};
+    request.cmd = static_cast<std::uint8_t>(SystemCmd::FindReq);
+    request.device_id = binding.device_id;
+    request.kbind = binding.kbind;
+    request.transaction_id = binding.transaction_id;
+    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::FindRsp);
+    if (!response) return Result<void>::failure(response.error());
+    const auto frame = DeviceKeyFrame::from_bytes(response.value());
+    return frame.device_id == binding.device_id
+               ? Result<void>::success()
+               : Result<void>::failure(Error::InvalidResponse);
+}
+
+hardware::Result<void, Error> Client::cancel_binding(const DeviceKeyFrame& binding) noexcept {
+    if (!is_open()) return Result<void>::failure(Error::NotOpen);
+    if (binding.transaction_id == 0 || binding.device_id == std::array<std::uint8_t, 3>{})
+        return Result<void>::failure(Error::InvalidArgument);
+    DeviceKeyFrame request{};
+    request.cmd = static_cast<std::uint8_t>(SystemCmd::UnbindReq);
+    request.device_id = binding.device_id;
+    request.transaction_id = binding.transaction_id;
+    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::UnbindRsp);
+    if (!response) return Result<void>::failure(response.error());
+    return Result<void>::success();
 }
 
 std::uint32_t Client::next_transaction() noexcept {

@@ -33,6 +33,12 @@ public:
     [[nodiscard]] const DeviceIdentity& identity() const noexcept;
     /** @brief Uses normal communication to read the wireless E-stop box Device ID. */
     [[nodiscard]] hardware::Result<std::array<std::uint8_t, 3>, Error> read_device_id() noexcept;
+    /** @brief Starts a factory binding transaction; response carries generated Device ID and Kbind. */
+    [[nodiscard]] hardware::Result<DeviceKeyFrame, Error> prepare_binding() noexcept;
+    /** @brief Verifies the wireless binding through FIND with the same transaction. */
+    [[nodiscard]] hardware::Result<void, Error> find_binding(const DeviceKeyFrame& binding) noexcept;
+    /** @brief Cancels a pending transmitter binding transaction. */
+    [[nodiscard]] hardware::Result<void, Error> cancel_binding(const DeviceKeyFrame& binding) noexcept;
     /** @brief Reads and validates the complete current LoRa parameters. */
     [[nodiscard]] hardware::Result<LoRaParamFrame, Error> read_lora_parameters() noexcept;
     /** @brief Reads and validates the complete current GFSK parameters. */

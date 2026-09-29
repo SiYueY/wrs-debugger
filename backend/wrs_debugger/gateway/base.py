@@ -9,8 +9,19 @@ from wrs_debugger.models.lora import LoRaParameters
 class BindingHandle:
     """Opaque internal binding transaction handle; never serialized or logged."""
 
-    def __init__(self, value: str) -> None:
+    def __init__(
+        self,
+        value: str,
+        *,
+        device_id: int | None = None,
+        kbind: bytes | None = None,
+        transaction_id: int | None = None,
+    ) -> None:
         self.value = value
+        self.device_id = device_id
+        self.kbind = kbind
+        self.transaction_id = transaction_id
+        self.receiver_prepared = False
 
 
 class WrsGateway(Protocol):
