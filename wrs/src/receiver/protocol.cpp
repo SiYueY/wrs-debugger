@@ -2,17 +2,17 @@
 
 namespace receiver {
 namespace {
-bool valid_common(
-    std::uint16_t raw_flags, RadioType expected, std::int16_t tx_power, std::uint8_t payload_len,
-    std::uint8_t rssi_threshold, std::uint16_t heartbeat_interval,
+bool valid_common_parameters(
+    std::uint16_t raw_flags, ParamFlags::Modulation expected, std::int16_t tx_power,
+    std::uint8_t payload_len, std::uint8_t rssi_threshold, std::uint16_t heartbeat_interval,
     std::uint8_t heartbeat_loss) noexcept {
-    ParamFlags flags{};
-    if (!ParamFlags::from_raw(raw_flags, flags) || flags.radio_type != expected ||
-        !flags.one_to_one) {
+    if (!ParamFlags::valid_flags(raw_flags)) return false;
+    const auto flags = ParamFlags::from_flags(raw_flags);
+    if (flags.modulation != expected || flags.group_mode != ParamFlags::GroupMode::OneToOne) {
         return false;
     }
 
-    const auto max_power = flags.band == Band::MHz433 ? 10 : 20;
+    const auto max_power = flags.band == ParamFlags::Band::MHz433 ? 10 : 20;
     bool result = tx_power >= 0 && tx_power <= max_power;
     result = result && (payload_len == 12);
     result = result && (rssi_threshold >= 10 && rssi_threshold <= 148);
@@ -22,33 +22,40 @@ bool valid_common(
 }
 }  // namespace
 
-std::uint16_t ParamFlags::to_raw() const noexcept {
-    std::uint16_t raw = radio_type == RadioType::Gfsk ? 0x4000U : 0U;
-    if (channel_scan) raw |= 0x20U;
-    if (!one_to_one) raw |= 0x10U;
-    if (!heartbeat_enabled) raw |= 0x08U;
-    if (!estop_enabled) raw |= 0x04U;
-    if (!crc_enabled) raw |= 0x02U;
-    if (band == Band::MHz915) raw |= 0x01U;
-    return raw;
+std::uint16_t ParamFlags::to_flags() const noexcept {
+    std::uint16_t flags = 0;
+    flags |= static_cast<std::uint16_t>(modulation) << 14;
+    flags |= static_cast<std::uint16_t>(channel_scan_mode) << 5;
+    flags |= static_cast<std::uint16_t>(group_mode) << 4;
+    flags |= static_cast<std::uint16_t>(heartbeat) << 3;
+    flags |= static_cast<std::uint16_t>(wireless_estop) << 2;
+    flags |= static_cast<std::uint16_t>(physical_crc) << 1;
+    flags |= static_cast<std::uint16_t>(band);
+    return flags;
 }
 
-bool ParamFlags::from_raw(std::uint16_t raw, ParamFlags& flags) noexcept {
-    if ((raw & 0x3fc0U) != 0 || ((raw >> 14U) & 0x3U) > 1) return false;
-    flags.radio_type = ((raw >> 14U) & 1U) != 0 ? RadioType::Gfsk : RadioType::LoRa;
-    flags.channel_scan = (raw & 0x20U) != 0;
-    flags.one_to_one = (raw & 0x10U) == 0;
-    flags.heartbeat_enabled = (raw & 0x08U) == 0;
-    flags.estop_enabled = (raw & 0x04U) == 0;
-    flags.crc_enabled = (raw & 0x02U) == 0;
-    flags.band = (raw & 0x01U) != 0 ? Band::MHz915 : Band::MHz433;
-    return true;
+ParamFlags ParamFlags::from_flags(std::uint16_t flags) noexcept {
+    ParamFlags result{};
+    result.modulation = static_cast<Modulation>((flags >> 14) & 0x3);
+    result.channel_scan_mode = static_cast<ChannelScanMode>((flags >> 5) & 0x1);
+    result.group_mode = static_cast<GroupMode>((flags >> 4) & 0x1);
+    result.heartbeat = static_cast<HeartbeatSwitch>((flags >> 3) & 0x1);
+    result.wireless_estop = static_cast<WirelessEstopSwitch>((flags >> 2) & 0x1);
+    result.physical_crc = static_cast<PhysicalCrcSwitch>((flags >> 1) & 0x1);
+    result.band = static_cast<Band>(flags & 0x1);
+    return result;
+}
+
+bool ParamFlags::valid_flags(std::uint16_t flags) noexcept {
+    constexpr std::uint16_t kReservedBits = 0x3fc0U;
+    return (flags & kReservedBits) == 0 && ((flags >> 14U) & 0x3U) <= 1;
 }
 
 bool valid(const LoRaParameters& parameters) noexcept {
-    bool result = valid_common(
-        parameters.param_flags, RadioType::LoRa, parameters.tx_power, parameters.payload_len,
-        parameters.rssi_threshold, parameters.heartbeat_interval, parameters.heartbeat_loss);
+    bool result = valid_common_parameters(
+        parameters.param_flags, ParamFlags::Modulation::LoRa, parameters.tx_power,
+        parameters.payload_len, parameters.rssi_threshold, parameters.heartbeat_interval,
+        parameters.heartbeat_loss);
     result = result && (parameters.bandwidth <= 2);
     result = result && (parameters.spreading_factor >= 5 && parameters.spreading_factor <= 12);
     result = result && (parameters.coding_rate <= 6 && parameters.header_type <= 1);
@@ -60,9 +67,10 @@ bool valid(const LoRaParameters& parameters) noexcept {
 }
 
 bool valid(const GfskParameters& parameters) noexcept {
-    bool result = valid_common(
-        parameters.param_flags, RadioType::Gfsk, parameters.tx_power, parameters.payload_len,
-        parameters.rssi_threshold, parameters.heartbeat_interval, parameters.heartbeat_loss);
+    bool result = valid_common_parameters(
+        parameters.param_flags, ParamFlags::Modulation::Gfsk, parameters.tx_power,
+        parameters.payload_len, parameters.rssi_threshold, parameters.heartbeat_interval,
+        parameters.heartbeat_loss);
     result = result && (parameters.bandwidth <= 2);
     result = result && (parameters.bitrate >= 600 && parameters.bitrate <= 150000);
     result = result && (parameters.freq_deviation >= 600 && parameters.freq_deviation <= 300000);

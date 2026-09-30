@@ -18,6 +18,7 @@ wrs::Result<std::vector<DeviceInfo>, Error> discover(
             Client client;
             auto opened = client.open(port.path, response_timeout, retry_interval, max_attempts);
             if (!opened) {
+                // 串口枚举可能包含其他设备，探测失败时继续检查下一个端口。
                 continue;
             }
             DeviceInfo info{};

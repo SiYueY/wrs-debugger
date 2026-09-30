@@ -2,12 +2,13 @@
 
 #include <chrono>
 #include <cstdlib>
-#include <memory>
-#include <string>
-
-#include <ddswrapper/node.hpp>
-#include <ddswrapper/context.hpp>
+#include <exception>
 #include <filesystem>
+#include <memory>
+#include <string_view>
+
+#include <ddswrapper/context.hpp>
+#include <ddswrapper/node.hpp>
 
 #include "GetEStopBindingState_.h"
 #include "GetEStopBindingState_PubSubTypes.h"
@@ -30,9 +31,10 @@ using StartBindingService = DDSWRAPPER_SERVICE(dds, StartEStopBinding);
 using GetConfigService = DDSWRAPPER_SERVICE(dds, GetEStopConfig);
 using SetConfigService = DDSWRAPPER_SERVICE(dds, SetEStopConfig);
 
-Error request_error(const std::exception& error) noexcept {
-    const std::string message(error.what());
-    return message.find("timed out") != std::string::npos ? Error::TimedOut : Error::DdsUnavailable;
+Error map_dds_request_error(const std::exception& error) noexcept {
+    const std::string_view message(error.what());
+    return message.find("timed out") != std::string_view::npos ? Error::TimedOut
+                                                               : Error::DdsUnavailable;
 }
 
 class DriverProxy::Impl final {
@@ -107,10 +109,10 @@ public:
             if (device_id > 0xffffffU ||
                 (response->binding_state_() != 0 && response->binding_state_() != 1))
                 return Result<BindingState>::failure(Error::UnexpectedResponse);
-            // The current driver does not populate binding_transaction_id_.
+            // 当前驱动未填写 binding_transaction_id_，绑定状态只使用设备 ID。
             return Result<BindingState>::success({response->binding_state_() == 1, device_id});
         } catch (const std::exception& error) {
-            return Result<BindingState>::failure(request_error(error));
+            return Result<BindingState>::failure(map_dds_request_error(error));
         } catch (...) {
             return Result<BindingState>::failure(Error::DdsUnavailable);
         }
@@ -139,13 +141,13 @@ public:
                        ? Result<void>::success()
                        : Result<void>::failure(Error::DeviceRejected);
         } catch (const std::exception& error) {
-            return Result<void>::failure(request_error(error));
+            return Result<void>::failure(map_dds_request_error(error));
         } catch (...) {
             return Result<void>::failure(Error::DdsUnavailable);
         }
     }
 
-    Result<LoRaParameters> read_lora() noexcept {
+    Result<LoRaParameters> read_lora_parameters() noexcept {
         if (!get_config_) return Result<LoRaParameters>::failure(Error::NotConnected);
         try {
             auto response = get_config_->send_request(
@@ -155,14 +157,22 @@ public:
             if (response->operation_type_() != 0)
                 return Result<LoRaParameters>::failure(Error::Unsupported);
             ParamFlags flags{};
-            flags.estop_enabled = response->estop_enabled_();
-            flags.heartbeat_enabled = response->heartbeat_enable_();
-            flags.one_to_one = !response->group_mode_enable_();
-            flags.channel_scan = response->channel_hopping_enabled_();
-            flags.crc_enabled = response->crc_enable_();
-            flags.band = response->frequency_band_() ? Band::MHz915 : Band::MHz433;
+            flags.wireless_estop = response->estop_enabled_()
+                                       ? ParamFlags::WirelessEstopSwitch::Enabled
+                                       : ParamFlags::WirelessEstopSwitch::Disabled;
+            flags.heartbeat = response->heartbeat_enable_() ? ParamFlags::HeartbeatSwitch::Enabled
+                                                            : ParamFlags::HeartbeatSwitch::Disabled;
+            flags.group_mode = response->group_mode_enable_() ? ParamFlags::GroupMode::OneToMany
+                                                              : ParamFlags::GroupMode::OneToOne;
+            flags.channel_scan_mode = response->channel_hopping_enabled_()
+                                          ? ParamFlags::ChannelScanMode::Hopping
+                                          : ParamFlags::ChannelScanMode::Single;
+            flags.physical_crc = response->crc_enable_() ? ParamFlags::PhysicalCrcSwitch::Enabled
+                                                         : ParamFlags::PhysicalCrcSwitch::Disabled;
+            flags.band =
+                response->frequency_band_() ? ParamFlags::Band::MHz915 : ParamFlags::Band::MHz433;
             LoRaParameters parameters{};
-            parameters.param_flags = flags.to_raw();
+            parameters.param_flags = flags.to_flags();
             parameters.tx_power = response->transmit_power_();
             parameters.freq_offset = response->frequency_offset_();
             parameters.payload_len = response->byte_length_();
@@ -179,28 +189,30 @@ public:
                 return Result<LoRaParameters>::failure(Error::UnexpectedResponse);
             return Result<LoRaParameters>::success(parameters);
         } catch (const std::exception& error) {
-            return Result<LoRaParameters>::failure(request_error(error));
+            return Result<LoRaParameters>::failure(map_dds_request_error(error));
         } catch (...) {
             return Result<LoRaParameters>::failure(Error::DdsUnavailable);
         }
     }
 
-    Result<void> write_lora(
+    Result<void> write_lora_parameters(
         const LoRaParameters& parameters, std::uint32_t transaction_id) noexcept {
         if (!set_config_) return Result<void>::failure(Error::NotConnected);
-        ParamFlags flags{};
-        if (!ParamFlags::from_raw(parameters.param_flags, flags) ||
-            flags.radio_type != RadioType::LoRa)
+        if (!ParamFlags::valid_flags(parameters.param_flags))
+            return Result<void>::failure(Error::InvalidArgument);
+        const auto flags = ParamFlags::from_flags(parameters.param_flags);
+        if (flags.modulation != ParamFlags::Modulation::LoRa)
             return Result<void>::failure(Error::InvalidArgument);
         try {
             auto value = std::make_shared<SetConfigService::Request>();
 
-            value->estop_enabled_(flags.estop_enabled);
-            value->heartbeat_enable_(flags.heartbeat_enabled);
-            value->group_mode_enable_(!flags.one_to_one);
-            value->channel_hopping_enabled_(flags.channel_scan);
-            value->crc_enable_(flags.crc_enabled);
-            value->frequency_band_(flags.band == Band::MHz915);
+            value->estop_enabled_(flags.wireless_estop == ParamFlags::WirelessEstopSwitch::Enabled);
+            value->heartbeat_enable_(flags.heartbeat == ParamFlags::HeartbeatSwitch::Enabled);
+            value->group_mode_enable_(flags.group_mode == ParamFlags::GroupMode::OneToMany);
+            value->channel_hopping_enabled_(
+                flags.channel_scan_mode == ParamFlags::ChannelScanMode::Hopping);
+            value->crc_enable_(flags.physical_crc == ParamFlags::PhysicalCrcSwitch::Enabled);
+            value->frequency_band_(flags.band == ParamFlags::Band::MHz915);
             value->intensity_threshold_(parameters.rssi_threshold);
             value->byte_length_(parameters.payload_len);
             value->heartbeat_loss_threshold_(parameters.heartbeat_loss);
@@ -220,20 +232,20 @@ public:
                 return Result<void>::failure(Error::DeviceRejected);
             return Result<void>::success();
         } catch (const std::exception& error) {
-            return Result<void>::failure(request_error(error));
+            return Result<void>::failure(map_dds_request_error(error));
         } catch (...) {
             return Result<void>::failure(Error::DdsUnavailable);
         }
     }
 
 private:
-    bool owns_runtime_{false};
-    std::unique_ptr<ddswrapper::Node> node_;
-    std::shared_ptr<ddswrapper::Client<BindingService>> binding_;
-    std::shared_ptr<ddswrapper::Client<StartBindingService>> start_binding_;
-    std::shared_ptr<ddswrapper::Client<GetConfigService>> get_config_;
-    std::shared_ptr<ddswrapper::Client<SetConfigService>> set_config_;
-    std::shared_ptr<ddswrapper::Subscriber<msg::WirelessEStopState_>> state_;
+    bool owns_runtime_{false};                // 仅关闭本实例初始化的 DDS 运行时
+    std::unique_ptr<ddswrapper::Node> node_;  // 当前 DDS 域中的节点
+    std::shared_ptr<ddswrapper::Client<BindingService>> binding_;              // 绑定状态服务
+    std::shared_ptr<ddswrapper::Client<StartBindingService>> start_binding_;   // 绑定请求服务
+    std::shared_ptr<ddswrapper::Client<GetConfigService>> get_config_;         // 参数读取服务
+    std::shared_ptr<ddswrapper::Client<SetConfigService>> set_config_;         // 参数写入服务
+    std::shared_ptr<ddswrapper::Subscriber<msg::WirelessEStopState_>> state_;  // 状态订阅者
 };
 
 DriverProxy::DriverProxy() noexcept : impl_(new Impl()) {}
@@ -280,10 +292,12 @@ Result<SdoResponse> DriverProxy::write_sdo(std::uint16_t, std::uint32_t) noexcep
     return Result<SdoResponse>::failure(is_connected() ? Error::Unsupported : Error::NotConnected);
 }
 
-Result<LoRaParameters> DriverProxy::read_lora_parameters() noexcept { return impl_->read_lora(); }
+Result<LoRaParameters> DriverProxy::read_lora_parameters() noexcept {
+    return impl_->read_lora_parameters();
+}
 
 Result<void> DriverProxy::write_lora_parameters(const LoRaParameters& parameters) noexcept {
-    return impl_->write_lora(parameters, next_transaction());
+    return impl_->write_lora_parameters(parameters, next_transaction());
 }
 
 Result<GfskParameters> DriverProxy::read_gfsk_parameters() noexcept {

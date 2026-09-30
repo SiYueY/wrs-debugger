@@ -40,7 +40,7 @@ std::string device_id_to_string(const std::array<std::uint8_t, 3>& value) {
     return text;
 }
 
-py::dict to_transmitter_lora_param(const transmitter::LoRaParamFrame& value) {
+py::dict lora_parameters_to_dict(const transmitter::LoRaParamFrame& value) {
     return py::dict(
         "param_flags"_a = value.param_flags, "tx_power"_a = value.tx_power,
         "freq_offset"_a = value.freq_offset, "payload_len"_a = value.payload_len,
@@ -52,7 +52,7 @@ py::dict to_transmitter_lora_param(const transmitter::LoRaParamFrame& value) {
         "sync_word"_a = value.sync_word);
 }
 
-transmitter::LoRaParamFrame from_transmitter_lora_param(const py::dict& dict) {
+transmitter::LoRaParamFrame lora_parameters_from_dict(const py::dict& dict) {
     transmitter::LoRaParamFrame value{};
     value.param_flags = dict["param_flags"].cast<std::uint16_t>();
     value.tx_power = dict["tx_power"].cast<std::int16_t>();
@@ -70,7 +70,7 @@ transmitter::LoRaParamFrame from_transmitter_lora_param(const py::dict& dict) {
     return value;
 }
 
-py::dict to_transmitter_gfsk_param(const transmitter::GfskParamFrame& value) {
+py::dict gfsk_parameters_to_dict(const transmitter::GfskParamFrame& value) {
     return py::dict(
         "param_flags"_a = value.param_flags, "tx_power"_a = value.tx_power,
         "freq_offset"_a = value.freq_offset, "payload_len"_a = value.payload_len,
@@ -82,7 +82,7 @@ py::dict to_transmitter_gfsk_param(const transmitter::GfskParamFrame& value) {
         "sync_word"_a = value.sync_word);
 }
 
-transmitter::GfskParamFrame from_transmitter_gfsk_param(const py::dict& dict) {
+transmitter::GfskParamFrame gfsk_parameters_from_dict(const py::dict& dict) {
     transmitter::GfskParamFrame value{};
     value.param_flags = dict["param_flags"].cast<std::uint16_t>();
     value.tx_power = dict["tx_power"].cast<std::int16_t>();
@@ -100,7 +100,7 @@ transmitter::GfskParamFrame from_transmitter_gfsk_param(const py::dict& dict) {
     return value;
 }
 
-transmitter::DeviceKeyFrame binding_frame(const py::dict& context) {
+transmitter::DeviceKeyFrame binding_frame_from_dict(const py::dict& context) {
     transmitter::DeviceKeyFrame frame{};
     const auto device_id = context["device_id"].cast<std::uint32_t>();
     const std::string key = context["kbind"].cast<std::string>();
@@ -121,15 +121,15 @@ void bind_transmitter_lora(py::class_<transmitter::Client>& client) {
         .def(
             "read_lora",
             [](transmitter::Client& value) {
-                return to_transmitter_lora_param(unwrap(value.read_lora_parameters()));
+                return lora_parameters_to_dict(unwrap(value.read_lora_parameters()));
             })
         .def(
             "write_lora",
             [](transmitter::Client& value, const py::dict& dict) {
-                unwrap(value.write_lora_parameters(from_transmitter_lora_param(dict)));
+                unwrap(value.write_lora_parameters(lora_parameters_from_dict(dict)));
             })
         .def("restore_lora", [](transmitter::Client& value) {
-            unwrap(value.restore_default_parameters(transmitter::RadioType::LoRa));
+            unwrap(value.restore_default_parameters(transmitter::ParamFlags::Modulation::LoRa));
         });
 }
 
@@ -138,15 +138,15 @@ void bind_transmitter_gfsk(py::class_<transmitter::Client>& client) {
         .def(
             "read_gfsk",
             [](transmitter::Client& value) {
-                return to_transmitter_gfsk_param(unwrap(value.read_gfsk_parameters()));
+                return gfsk_parameters_to_dict(unwrap(value.read_gfsk_parameters()));
             })
         .def(
             "write_gfsk",
             [](transmitter::Client& value, const py::dict& dict) {
-                unwrap(value.write_gfsk_parameters(from_transmitter_gfsk_param(dict)));
+                unwrap(value.write_gfsk_parameters(gfsk_parameters_from_dict(dict)));
             })
         .def("restore_gfsk", [](transmitter::Client& value) {
-            unwrap(value.restore_default_parameters(transmitter::RadioType::GFSK));
+            unwrap(value.restore_default_parameters(transmitter::ParamFlags::Modulation::Gfsk));
         });
 }
 
@@ -209,12 +209,12 @@ void bind_transmitter(py::module_& module) {
             .def(
                 "find_binding",
                 [](transmitter::Client& value, const py::dict& context) {
-                    unwrap(value.find_binding(binding_frame(context)));
+                    unwrap(value.find_binding(binding_frame_from_dict(context)));
                 })
             .def(
                 "cancel_binding",
                 [](transmitter::Client& value, const py::dict& context) {
-                    unwrap(value.cancel_binding(binding_frame(context)));
+                    unwrap(value.cancel_binding(binding_frame_from_dict(context)));
                 })
             .def(
                 "read_pin",
@@ -230,7 +230,7 @@ void bind_transmitter(py::module_& module) {
                         "object_address"_a = (frame.object_index & 0x0fffU),
                         "object_data"_a = frame.object_data,
                         "status"_a = (frame.object_index >> 12U),
-                        "result_code"_a = frame.result_code);
+                        "result_code"_a = static_cast<std::uint8_t>(frame.result_code));
                 })
             .def(
                 "write_sdo",

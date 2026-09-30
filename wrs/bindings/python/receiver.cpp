@@ -38,7 +38,7 @@ std::string device_id_to_string(const std::array<std::uint8_t, 3>& value) {
     return text;
 }
 
-py::dict to_receiver_lora_param(const receiver::LoRaParameters& value) {
+py::dict lora_parameters_to_dict(const receiver::LoRaParameters& value) {
     return py::dict(
         "param_flags"_a = value.param_flags, "tx_power"_a = value.tx_power,
         "freq_offset"_a = value.freq_offset, "payload_len"_a = value.payload_len,
@@ -50,7 +50,7 @@ py::dict to_receiver_lora_param(const receiver::LoRaParameters& value) {
         "sync_word"_a = value.sync_word);
 }
 
-receiver::LoRaParameters from_receiver_lora_param(const py::dict& dict) {
+receiver::LoRaParameters lora_parameters_from_dict(const py::dict& dict) {
     receiver::LoRaParameters value{};
     value.param_flags = dict["param_flags"].cast<std::uint16_t>();
     value.tx_power = dict["tx_power"].cast<std::int16_t>();
@@ -68,7 +68,7 @@ receiver::LoRaParameters from_receiver_lora_param(const py::dict& dict) {
     return value;
 }
 
-py::dict to_receiver_gfsk_param(const receiver::GfskParameters& value) {
+py::dict gfsk_parameters_to_dict(const receiver::GfskParameters& value) {
     return py::dict(
         "param_flags"_a = value.param_flags, "tx_power"_a = value.tx_power,
         "freq_offset"_a = value.freq_offset, "payload_len"_a = value.payload_len,
@@ -80,7 +80,7 @@ py::dict to_receiver_gfsk_param(const receiver::GfskParameters& value) {
         "sync_word"_a = value.sync_word);
 }
 
-receiver::GfskParameters from_receiver_gfsk_param(const py::dict& dict) {
+receiver::GfskParameters gfsk_parameters_from_dict(const py::dict& dict) {
     receiver::GfskParameters value{};
     value.param_flags = dict["param_flags"].cast<std::uint16_t>();
     value.tx_power = dict["tx_power"].cast<std::int16_t>();
@@ -104,12 +104,12 @@ void bind_receiver_lora(py::class_<receiver::Client>& client) {
         .def(
             "read_lora",
             [](receiver::Client& value) {
-                return to_receiver_lora_param(unwrap(value.read_lora_parameters()));
+                return lora_parameters_to_dict(unwrap(value.read_lora_parameters()));
             })
         .def(
             "write_lora",
             [](receiver::Client& value, const py::dict& dict) {
-                unwrap(value.write_lora_parameters(from_receiver_lora_param(dict)));
+                unwrap(value.write_lora_parameters(lora_parameters_from_dict(dict)));
             })
         .def("restore_lora", [](receiver::Client& value) { unwrap(value.restore_lora()); });
 }
@@ -119,12 +119,12 @@ void bind_receiver_gfsk(py::class_<receiver::Client>& client) {
         .def(
             "read_gfsk",
             [](receiver::Client& value) {
-                return to_receiver_gfsk_param(unwrap(value.read_gfsk_parameters()));
+                return gfsk_parameters_to_dict(unwrap(value.read_gfsk_parameters()));
             })
         .def(
             "write_gfsk",
             [](receiver::Client& value, const py::dict& dict) {
-                unwrap(value.write_gfsk_parameters(from_receiver_gfsk_param(dict)));
+                unwrap(value.write_gfsk_parameters(gfsk_parameters_from_dict(dict)));
             })
         .def("restore_gfsk", [](receiver::Client& value) { unwrap(value.restore_gfsk()); });
 }

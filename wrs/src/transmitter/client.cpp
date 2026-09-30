@@ -10,7 +10,7 @@ constexpr std::uint32_t kUpgradeRequestValue = 0x454e;
 template <typename T>
 using Result = wrs::Result<T, Error>;
 
-Error to_error(serial::Error error) noexcept {
+Error map_serial_error(serial::Error error) noexcept {
     switch (error) {
         case serial::Error::InvalidArgument:
             return Error::InvalidArgument;
@@ -96,18 +96,18 @@ bool is_zero(const std::uint8_t* bytes, std::size_t size) noexcept {
     return true;
 }
 
-bool valid_param_flags(std::uint16_t raw_flags, RadioType expected_type) noexcept {
+bool valid_parameter_flags(std::uint16_t raw_flags, ParamFlags::Modulation expected_type) noexcept {
     constexpr std::uint16_t kReservedBits = 0x3fc0;
-    const auto radio_type = static_cast<std::uint8_t>((raw_flags >> 14) & 0x3);
-    if ((raw_flags & kReservedBits) != 0 || radio_type > 1) return false;
-    return radio_type == static_cast<std::uint8_t>(expected_type);
+    const auto modulation = static_cast<std::uint8_t>((raw_flags >> 14) & 0x3);
+    if ((raw_flags & kReservedBits) != 0 || modulation > 1) return false;
+    return modulation == static_cast<std::uint8_t>(expected_type);
 }
 
 template <typename Frame>
 bool valid_common_parameters(const Frame& frame) noexcept {
-    const auto band = ParamFlags::from_raw(frame.param_flags).band;
+    const auto band = ParamFlags::from_flags(frame.param_flags).band;
     bool result = frame.tx_power >= 0 && frame.tx_power <= 22;
-    result = result && (band != Band::MHz433 || frame.tx_power <= 10);
+    result = result && (band != ParamFlags::Band::MHz433 || frame.tx_power <= 10);
     result = result && (frame.payload_len == 12);
     result = result && (frame.rssi_threshold >= 10 && frame.rssi_threshold <= 148);
     result = result && (frame.heartbeat_interval >= 200 && frame.heartbeat_interval <= 10000);
@@ -140,7 +140,7 @@ bool valid_gfsk_fields(const GfskParamFrame& frame) noexcept {
 bool valid_lora_parameters(const LoRaParamFrame& frame) noexcept {
     bool result = frame.object_index == 0 && frame.object_data == 0 && frame.result_code == 0;
     result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
-    result = result && (valid_param_flags(frame.param_flags, RadioType::LoRa));
+    result = result && (valid_parameter_flags(frame.param_flags, ParamFlags::Modulation::LoRa));
     result = result && (valid_lora_fields(frame));
     return result;
 }
@@ -148,24 +148,22 @@ bool valid_lora_parameters(const LoRaParamFrame& frame) noexcept {
 bool valid_gfsk_parameters(const GfskParamFrame& frame) noexcept {
     bool result = frame.object_index == 0 && frame.object_data == 0 && frame.result_code == 0;
     result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
-    result = result && (valid_param_flags(frame.param_flags, RadioType::GFSK));
+    result = result && (valid_parameter_flags(frame.param_flags, ParamFlags::Modulation::Gfsk));
     result = result && (valid_gfsk_fields(frame));
     return result;
 }
 
 bool valid_lora_response(const LoRaParamFrame& frame) noexcept {
     bool result = frame.object_index == 0x4000 && frame.object_data == 0;
-    result = result && (valid_param_flags(frame.param_flags, RadioType::LoRa));
+    result = result && (valid_parameter_flags(frame.param_flags, ParamFlags::Modulation::LoRa));
     result = result && (valid_lora_fields(frame));
-    result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
     return result;
 }
 
 bool valid_gfsk_response(const GfskParamFrame& frame) noexcept {
     bool result = frame.object_index == 0x4000 && frame.object_data == 0;
-    result = result && (valid_param_flags(frame.param_flags, RadioType::GFSK));
+    result = result && (valid_parameter_flags(frame.param_flags, ParamFlags::Modulation::Gfsk));
     result = result && (valid_gfsk_fields(frame));
-    result = result && (is_zero(frame.reserved.data(), frame.reserved.size()));
     return result;
 }
 
@@ -184,20 +182,41 @@ Error sdo_status_error(std::uint16_t status) noexcept {
     }
 }
 
-std::uint32_t response_transaction_id(const Bytes& bytes, SystemCmd expected) noexcept {
-    if (expected == SystemCmd::NormalRsp) return 0;
-    if (expected == SystemCmd::PinCfgRsp) return read_le32(bytes.bytes() + 12);
-    if (expected == SystemCmd::BindRsp || expected == SystemCmd::FindRsp ||
-        expected == SystemCmd::UnbindRsp)
-        return read_le32(bytes.bytes() + 20);
-    return read_le32(bytes.bytes() + 1);
+// 解码器不保存保留区，响应必须直接检查原始帧。
+bool reserved_bytes_are_zero(const Frame& frame, std::size_t offset, std::size_t size) noexcept {
+    return is_zero(frame.bytes() + offset, size);
+}
+
+bool valid_pin_reserved_bytes(const Frame& frame) noexcept {
+    return reserved_bytes_are_zero(frame, 7, 5) && reserved_bytes_are_zero(frame, 16, 23);
+}
+
+std::uint32_t response_transaction_id(const Frame& frame, SystemCommand expected) noexcept {
+    if (expected == SystemCommand::RunStatusRsp) return 0;
+    if (expected == SystemCommand::PinConfigRsp) return read_le32(frame.bytes() + 12);
+    if (expected == SystemCommand::BindRsp || expected == SystemCommand::FindRsp ||
+        expected == SystemCommand::UnbindRsp)
+        return read_le32(frame.bytes() + 20);
+    return read_le32(frame.bytes() + 1);
+}
+
+Frame parameter_read_request(
+    std::uint32_t transaction_id, ParamFlags::Modulation modulation) noexcept {
+    Frame request{};
+    request[0] = static_cast<std::uint8_t>(SystemCommand::ReadParamReq);
+    write_le32(request.bytes() + 1, transaction_id);
+    ParamFlags flags{};
+    flags.modulation = modulation;
+    write_le16(request.bytes() + 11, flags.to_flags());
+    fill_crc(request);
+    return request;
 }
 
 LoRaParamFrame default_lora_frame() noexcept {
     LoRaParamFrame frame{};
     ParamFlags flags{};
-    flags.radio_type = RadioType::LoRa;
-    frame.param_flags = flags.to_raw();
+    flags.modulation = ParamFlags::Modulation::LoRa;
+    frame.param_flags = flags.to_flags();
     frame.tx_power = 10;
     frame.freq_offset = 250;
     frame.payload_len = 12;
@@ -215,8 +234,8 @@ LoRaParamFrame default_lora_frame() noexcept {
 GfskParamFrame default_gfsk_frame() noexcept {
     GfskParamFrame frame{};
     ParamFlags flags{};
-    flags.radio_type = RadioType::GFSK;
-    frame.param_flags = flags.to_raw();
+    flags.modulation = ParamFlags::Modulation::Gfsk;
+    frame.param_flags = flags.to_flags();
     frame.tx_power = 10;
     frame.freq_offset = 250;
     frame.payload_len = 12;
@@ -260,7 +279,7 @@ wrs::Result<void, Error> Client::open(
     }
     auto opened = port_.open(path, transmitter_config());
     if (!opened) {
-        return Result<void>::failure(to_error(opened.error()));
+        return Result<void>::failure(map_serial_error(opened.error()));
     }
     response_timeout_ = response_timeout;
     retry_interval_ = retry_interval;
@@ -269,7 +288,7 @@ wrs::Result<void, Error> Client::open(
     auto discarded = port_.discard_input();
     if (!discarded) {
         (void)close();
-        return Result<void>::failure(to_error(discarded.error()));
+        return Result<void>::failure(map_serial_error(discarded.error()));
     }
     auto product = read_sdo(SdoObject::ProductCode);
     auto version =
@@ -293,7 +312,7 @@ wrs::Result<void, Error> Client::close() noexcept {
     identity_ = {};
     auto close_result = port_.close();
     return close_result ? Result<void>::success()
-                        : Result<void>::failure(to_error(close_result.error()));
+                        : Result<void>::failure(map_serial_error(close_result.error()));
 }
 
 bool Client::is_open() const noexcept { return port_.is_open(); }
@@ -303,25 +322,26 @@ const DeviceIdentity& Client::identity() const noexcept { return identity_; }
 wrs::Result<std::array<std::uint8_t, 3>, Error> Client::read_device_id() noexcept {
     if (!is_open()) return Result<std::array<std::uint8_t, 3>>::failure(Error::NotOpen);
     NormalFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::NormalReq);
-    auto response = exchange(request.to_bytes(), 0, SystemCmd::NormalRsp);
+    request.cmd = SystemCommand::RunStatusReq;
+    auto response = exchange(request.to_frame(), 0, SystemCommand::RunStatusRsp);
     if (!response) return Result<std::array<std::uint8_t, 3>>::failure(response.error());
-    const auto frame = NormalFrame::from_bytes(response.value());
-    if (!is_zero(frame.reserved.data(), frame.reserved.size()))
+    if (!reserved_bytes_are_zero(response.value(), 28, 11))
         return Result<std::array<std::uint8_t, 3>>::failure(Error::InvalidResponse);
+    const auto frame = NormalFrame::from_frame(response.value());
     return Result<std::array<std::uint8_t, 3>>::success(frame.device_id);
 }
 
 wrs::Result<DeviceKeyFrame, Error> Client::prepare_binding() noexcept {
     if (!is_open()) return Result<DeviceKeyFrame>::failure(Error::NotOpen);
     DeviceKeyFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::BindReq);
+    request.cmd = SystemCommand::BindReq;
     request.transaction_id = next_transaction();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::BindRsp);
+    auto response = exchange(request.to_frame(), request.transaction_id, SystemCommand::BindRsp);
     if (!response) return Result<DeviceKeyFrame>::failure(response.error());
-    auto frame = DeviceKeyFrame::from_bytes(response.value());
-    if (frame.device_id == std::array<std::uint8_t, 3>{} ||
-        !is_zero(frame.reserved.data(), frame.reserved.size()))
+    if (!reserved_bytes_are_zero(response.value(), 24, 15))
+        return Result<DeviceKeyFrame>::failure(Error::InvalidResponse);
+    auto frame = DeviceKeyFrame::from_frame(response.value());
+    if (frame.device_id == std::array<std::uint8_t, 3>{})
         return Result<DeviceKeyFrame>::failure(Error::InvalidResponse);
     return Result<DeviceKeyFrame>::success(std::move(frame));
 }
@@ -331,13 +351,15 @@ wrs::Result<void, Error> Client::find_binding(const DeviceKeyFrame& binding) noe
     if (binding.transaction_id == 0 || binding.device_id == std::array<std::uint8_t, 3>{})
         return Result<void>::failure(Error::InvalidArgument);
     DeviceKeyFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::FindReq);
+    request.cmd = SystemCommand::FindReq;
     request.device_id = binding.device_id;
     request.kbind = binding.kbind;
     request.transaction_id = binding.transaction_id;
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::FindRsp);
+    auto response = exchange(request.to_frame(), request.transaction_id, SystemCommand::FindRsp);
     if (!response) return Result<void>::failure(response.error());
-    const auto frame = DeviceKeyFrame::from_bytes(response.value());
+    if (!reserved_bytes_are_zero(response.value(), 24, 15))
+        return Result<void>::failure(Error::InvalidResponse);
+    const auto frame = DeviceKeyFrame::from_frame(response.value());
     return frame.device_id == binding.device_id ? Result<void>::success()
                                                 : Result<void>::failure(Error::InvalidResponse);
 }
@@ -347,11 +369,13 @@ wrs::Result<void, Error> Client::cancel_binding(const DeviceKeyFrame& binding) n
     if (binding.transaction_id == 0 || binding.device_id == std::array<std::uint8_t, 3>{})
         return Result<void>::failure(Error::InvalidArgument);
     DeviceKeyFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::UnbindReq);
+    request.cmd = SystemCommand::UnbindReq;
     request.device_id = binding.device_id;
     request.transaction_id = binding.transaction_id;
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::UnbindRsp);
+    auto response = exchange(request.to_frame(), request.transaction_id, SystemCommand::UnbindRsp);
     if (!response) return Result<void>::failure(response.error());
+    if (!reserved_bytes_are_zero(response.value(), 24, 15))
+        return Result<void>::failure(Error::InvalidResponse);
     return Result<void>::success();
 }
 
@@ -363,10 +387,10 @@ std::uint32_t Client::next_transaction() noexcept {
     return value == 0 ? next_transaction() : value;
 }
 
-wrs::Result<Bytes, Error> Client::exchange(
-    const Bytes& request, std::uint32_t transaction_id, SystemCmd expected_command) noexcept {
+wrs::Result<Frame, Error> Client::exchange(
+    const Frame& request, std::uint32_t transaction_id, SystemCommand expected_command) noexcept {
     if (!is_open()) {
-        return Result<Bytes>::failure(Error::NotOpen);
+        return Result<Frame>::failure(Error::NotOpen);
     }
     for (std::uint8_t attempt = 0; attempt < max_attempts_; ++attempt) {
         if (attempt != 0 && retry_interval_ > std::chrono::milliseconds::zero()) {
@@ -385,13 +409,13 @@ wrs::Result<Bytes, Error> Client::exchange(
             if (!write) {
                 if (sent != 0) {
                     (void)close();
-                    return Result<Bytes>::failure(Error::FrameSyncLost);
+                    return Result<Frame>::failure(Error::FrameSyncLost);
                 }
                 if (write.error() != serial::Error::TimedOut &&
                     write.error() != serial::Error::WouldBlock) {
-                    const auto error = to_error(write.error());
+                    const auto error = map_serial_error(write.error());
                     if (error == Error::Disconnected) (void)close();
-                    return Result<Bytes>::failure(error);
+                    return Result<Frame>::failure(error);
                 }
                 break;
             }
@@ -399,7 +423,7 @@ wrs::Result<Bytes, Error> Client::exchange(
         }
         if (sent != request.size()) continue;
 
-        Bytes response{};
+        Frame response{};
         std::size_t received = 0;
         const auto read_deadline = std::chrono::steady_clock::now() + response_timeout_;
         while (received < response.size()) {
@@ -412,43 +436,44 @@ wrs::Result<Bytes, Error> Client::exchange(
                 if (read.error() == serial::Error::TimedOut ||
                     read.error() == serial::Error::WouldBlock)
                     break;
-                const auto error = to_error(read.error());
+                const auto error = map_serial_error(read.error());
                 if (error == Error::Disconnected) (void)close();
-                return Result<Bytes>::failure(error);
+                return Result<Frame>::failure(error);
             }
             received += read.value();
         }
         if (received != response.size()) {
             if (received != 0) {
                 (void)close();
-                return Result<Bytes>::failure(Error::FrameSyncLost);
+                return Result<Frame>::failure(Error::FrameSyncLost);
             }
             continue;
         }
         if (!has_valid_crc(response)) {
             (void)close();
-            return Result<Bytes>::failure(Error::CrcMismatch);
+            return Result<Frame>::failure(Error::CrcMismatch);
         }
         if (response[0] != static_cast<std::uint8_t>(expected_command))
-            return Result<Bytes>::failure(Error::UnexpectedResponse);
+            return Result<Frame>::failure(Error::UnexpectedResponse);
         if (response_transaction_id(response, expected_command) != transaction_id) continue;
         if (response[39] != static_cast<std::uint8_t>(ResultCode::Success))
-            return Result<Bytes>::failure(Error::DeviceRejected);
-        return Result<Bytes>::success(std::move(response));
+            return Result<Frame>::failure(Error::DeviceRejected);
+        return Result<Frame>::success(std::move(response));
     }
-    return Result<Bytes>::failure(Error::TimedOut);
+    return Result<Frame>::failure(Error::TimedOut);
 }
 
 wrs::Result<SdoFrame, Error> Client::read_sdo(std::uint16_t object_address) noexcept {
     if (!is_open()) return Result<SdoFrame>::failure(Error::NotOpen);
     if ((object_address & 0xf000U) != 0U) return Result<SdoFrame>::failure(Error::InvalidArgument);
     SdoFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadReq);
+    request.cmd = SystemCommand::ReadParamReq;
     request.transaction_id = next_transaction();
     request.object_index = object_address;
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamReadRsp);
+    auto response =
+        exchange(request.to_frame(), request.transaction_id, SystemCommand::ReadParamRsp);
     if (!response) return Result<SdoFrame>::failure(response.error());
-    const auto frame = SdoFrame::from_bytes(response.value());
+    const auto frame = SdoFrame::from_frame(response.value());
     if ((frame.object_index & 0x0fff) != request.object_index)
         return Result<SdoFrame>::failure(Error::InvalidResponse);
     const auto status = static_cast<std::uint16_t>(frame.object_index >> 12);
@@ -465,16 +490,18 @@ wrs::Result<void, Error> Client::write_sdo(const SdoFrame& request_frame) noexce
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if ((request_frame.object_index & 0x0fff) !=
             static_cast<std::uint16_t>(SdoObject::UpgradeRequest) ||
-        request_frame.object_data != kUpgradeRequestValue || request_frame.result_code != 0 ||
+        request_frame.object_data != kUpgradeRequestValue ||
+        request_frame.result_code != ResultCode::Success ||
         !is_zero(request_frame.reserved.data(), request_frame.reserved.size()))
         return Result<void>::failure(Error::InvalidArgument);
     auto request = request_frame;
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamWriteReq);
+    request.cmd = SystemCommand::WriteParamReq;
     request.transaction_id = next_transaction();
     request.object_index = static_cast<std::uint16_t>((request.object_index & 0x0fff) | 0x1000);
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamWriteRsp);
+    auto response =
+        exchange(request.to_frame(), request.transaction_id, SystemCommand::WriteParamRsp);
     if (!response) return Result<void>::failure(response.error());
-    const auto frame = SdoFrame::from_bytes(response.value());
+    const auto frame = SdoFrame::from_frame(response.value());
     const auto status = static_cast<std::uint16_t>(frame.object_index >> 12);
     if ((frame.object_index & 0x0fff) != static_cast<std::uint16_t>(SdoObject::UpgradeRequest))
         return Result<void>::failure(Error::InvalidResponse);
@@ -485,28 +512,26 @@ wrs::Result<void, Error> Client::write_sdo(const SdoFrame& request_frame) noexce
 
 wrs::Result<LoRaParamFrame, Error> Client::read_lora_parameters() noexcept {
     if (!is_open()) return Result<LoRaParamFrame>::failure(Error::NotOpen);
-    LoRaParamFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadReq);
-    request.transaction_id = next_transaction();
-    request.param_flags = ParamFlags{}.to_raw();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamReadRsp);
+    const auto transaction_id = next_transaction();
+    const auto request = parameter_read_request(transaction_id, ParamFlags::Modulation::LoRa);
+    auto response = exchange(request, transaction_id, SystemCommand::ReadParamRsp);
     if (!response) return Result<LoRaParamFrame>::failure(response.error());
-    const auto frame = LoRaParamFrame::from_bytes(response.value());
+    if (!reserved_bytes_are_zero(response.value(), 29, 10))
+        return Result<LoRaParamFrame>::failure(Error::InvalidResponse);
+    const auto frame = LoRaParamFrame::from_frame(response.value());
     if (!valid_lora_response(frame)) return Result<LoRaParamFrame>::failure(Error::InvalidResponse);
     return Result<LoRaParamFrame>::success(frame);
 }
 
 wrs::Result<GfskParamFrame, Error> Client::read_gfsk_parameters() noexcept {
     if (!is_open()) return Result<GfskParamFrame>::failure(Error::NotOpen);
-    GfskParamFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamReadReq);
-    request.transaction_id = next_transaction();
-    ParamFlags flags{};
-    flags.radio_type = RadioType::GFSK;
-    request.param_flags = flags.to_raw();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamReadRsp);
+    const auto transaction_id = next_transaction();
+    const auto request = parameter_read_request(transaction_id, ParamFlags::Modulation::Gfsk);
+    auto response = exchange(request, transaction_id, SystemCommand::ReadParamRsp);
     if (!response) return Result<GfskParamFrame>::failure(response.error());
-    const auto frame = GfskParamFrame::from_bytes(response.value());
+    if (!reserved_bytes_are_zero(response.value(), 35, 4))
+        return Result<GfskParamFrame>::failure(Error::InvalidResponse);
+    const auto frame = GfskParamFrame::from_frame(response.value());
     if (!valid_gfsk_response(frame)) return Result<GfskParamFrame>::failure(Error::InvalidResponse);
     return Result<GfskParamFrame>::success(frame);
 }
@@ -517,14 +542,16 @@ wrs::Result<void, Error> Client::write_lora_parameters(
     if (!valid_lora_parameters(parameter_frame))
         return Result<void>::failure(Error::InvalidArgument);
     auto request = parameter_frame;
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamWriteReq);
+    request.cmd = static_cast<std::uint8_t>(SystemCommand::WriteParamReq);
     request.transaction_id = next_transaction();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamWriteRsp);
+    auto response =
+        exchange(request.to_frame(), request.transaction_id, SystemCommand::WriteParamRsp);
     if (!response) return Result<void>::failure(response.error());
-    const auto frame = LoRaParamFrame::from_bytes(response.value());
+    if (!reserved_bytes_are_zero(response.value(), 29, 10))
+        return Result<void>::failure(Error::InvalidResponse);
+    const auto frame = LoRaParamFrame::from_frame(response.value());
     return frame.object_index == 0x6000 && frame.object_data == 0 &&
-                   valid_param_flags(frame.param_flags, RadioType::LoRa) &&
-                   is_zero(frame.reserved.data(), frame.reserved.size())
+                   valid_parameter_flags(frame.param_flags, ParamFlags::Modulation::LoRa)
                ? Result<void>::success()
                : Result<void>::failure(Error::InvalidResponse);
 }
@@ -535,50 +562,58 @@ wrs::Result<void, Error> Client::write_gfsk_parameters(
     if (!valid_gfsk_parameters(parameter_frame))
         return Result<void>::failure(Error::InvalidArgument);
     auto request = parameter_frame;
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::ParamWriteReq);
+    request.cmd = static_cast<std::uint8_t>(SystemCommand::WriteParamReq);
     request.transaction_id = next_transaction();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::ParamWriteRsp);
+    auto response =
+        exchange(request.to_frame(), request.transaction_id, SystemCommand::WriteParamRsp);
     if (!response) return Result<void>::failure(response.error());
-    const auto frame = GfskParamFrame::from_bytes(response.value());
+    if (!reserved_bytes_are_zero(response.value(), 35, 4))
+        return Result<void>::failure(Error::InvalidResponse);
+    const auto frame = GfskParamFrame::from_frame(response.value());
     return frame.object_index == 0x6000 && frame.object_data == 0 &&
-                   valid_param_flags(frame.param_flags, RadioType::GFSK) &&
-                   is_zero(frame.reserved.data(), frame.reserved.size())
+                   valid_parameter_flags(frame.param_flags, ParamFlags::Modulation::Gfsk)
                ? Result<void>::success()
                : Result<void>::failure(Error::InvalidResponse);
 }
 
-wrs::Result<void, Error> Client::restore_default_parameters(RadioType type) noexcept {
-    return type == RadioType::LoRa ? write_lora_parameters(default_lora_frame())
-                                   : write_gfsk_parameters(default_gfsk_frame());
+wrs::Result<void, Error> Client::restore_default_parameters(ParamFlags::Modulation type) noexcept {
+    if (type == ParamFlags::Modulation::LoRa) return write_lora_parameters(default_lora_frame());
+    if (type == ParamFlags::Modulation::Gfsk) return write_gfsk_parameters(default_gfsk_frame());
+    return Result<void>::failure(Error::InvalidArgument);
 }
 
 wrs::Result<PinFrame, Error> Client::read_pin() noexcept {
     if (!is_open()) return Result<PinFrame>::failure(Error::NotOpen);
     PinFrame request{};
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::PinCfgReq);
+    request.cmd = SystemCommand::PinConfigReq;
     request.pin.fill(static_cast<std::uint8_t>('0'));
     request.transaction_id = next_transaction();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::PinCfgRsp);
+    auto response =
+        exchange(request.to_frame(), request.transaction_id, SystemCommand::PinConfigRsp);
     if (!response) return Result<PinFrame>::failure(response.error());
-    const auto frame = PinFrame::from_bytes(response.value());
-    if (!is_zero(frame.reserved1.data(), frame.reserved1.size()) ||
-        !is_zero(frame.reserved2.data(), frame.reserved2.size()) || !valid_pin(frame))
+    if (!valid_pin_reserved_bytes(response.value()))
         return Result<PinFrame>::failure(Error::InvalidResponse);
+    const auto frame = PinFrame::from_frame(response.value());
+    if (!valid_pin(frame)) return Result<PinFrame>::failure(Error::InvalidResponse);
     return Result<PinFrame>::success(frame);
 }
 
 wrs::Result<void, Error> Client::write_pin(const PinFrame& pin_frame) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
-    if (!valid_pin(pin_frame) || all_zero_pin(pin_frame) || pin_frame.result_code != 0 ||
+    if (!valid_pin(pin_frame) || all_zero_pin(pin_frame) ||
+        pin_frame.result_code != ResultCode::Success ||
         !is_zero(pin_frame.reserved1.data(), pin_frame.reserved1.size()) ||
         !is_zero(pin_frame.reserved2.data(), pin_frame.reserved2.size()))
         return Result<void>::failure(Error::InvalidArgument);
     auto request = pin_frame;
-    request.cmd = static_cast<std::uint8_t>(SystemCmd::PinCfgReq);
+    request.cmd = SystemCommand::PinConfigReq;
     request.transaction_id = next_transaction();
-    auto response = exchange(request.to_bytes(), request.transaction_id, SystemCmd::PinCfgRsp);
+    auto response =
+        exchange(request.to_frame(), request.transaction_id, SystemCommand::PinConfigRsp);
     if (!response) return Result<void>::failure(response.error());
-    const auto frame = PinFrame::from_bytes(response.value());
+    if (!valid_pin_reserved_bytes(response.value()))
+        return Result<void>::failure(Error::InvalidResponse);
+    const auto frame = PinFrame::from_frame(response.value());
     return frame.pin == request.pin ? Result<void>::success()
                                     : Result<void>::failure(Error::InvalidResponse);
 }
