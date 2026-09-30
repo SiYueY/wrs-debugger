@@ -3,6 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,7 @@ class BackendSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WRS_DEBUGGER_", extra="ignore")
 
     build_id: str = "dev"
+    receiver_state_timeout_seconds: float = Field(default=3.0, gt=0)
 
 
 class SettingsRepository:

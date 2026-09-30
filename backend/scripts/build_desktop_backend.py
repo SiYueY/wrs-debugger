@@ -46,7 +46,7 @@ def build_native_module() -> None:
         check=True,
     )
     subprocess.run(
-        ["cmake", "--build", str(build_dir), "--target", "wrs_debugger_native"], check=True
+        ["cmake", "--build", str(build_dir), "--target", "wrs_debugger_adapter"], check=True
     )
 
 
@@ -95,7 +95,7 @@ run(
         "--collect-submodules",
         "wrs_debugger",
         "--hidden-import",
-        "wrs_debugger_native",
+        "wrs_debugger_adapter",
         "--add-data",
         f"{PROJECT_ROOT / 'wrs' / 'tests' / 'data' / 'dds_profile.xml'}:dds",
         *[argument for library in dds_libraries for argument in ("--add-binary", f"{library}:.")],

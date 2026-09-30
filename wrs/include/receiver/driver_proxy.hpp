@@ -54,10 +54,10 @@ public:
     [[nodiscard]] wrs::Result<ReceiverInfo, Error> read_info() noexcept;
 
     /**
-     * @brief 获取最新的无线急停状态样本。
+     * @brief 读取最新的无线急停状态 Topic 样本。
      * @return 最新状态；失败时返回错误码。
      */
-    [[nodiscard]] wrs::Result<ReceiverState, Error> read_state() noexcept;
+    [[nodiscard]] wrs::Result<ReceiverState, Error> read_wireless_estop_state() noexcept;
 
     /**
      * @brief 查询绑定状态。

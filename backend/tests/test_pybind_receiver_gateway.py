@@ -38,6 +38,9 @@ class FakeReceiver:
             raise RuntimeError("RECEIVER_6")
         self.bound = True
 
+    def read_wireless_estop_state(self) -> dict[str, Any]:
+        return {"device_id": 0xA1B2C3}
+
     def read_gfsk(self) -> None:
         raise RuntimeError("RECEIVER_15")
 
@@ -49,8 +52,13 @@ def gateway(
     receiver = FakeReceiver()
     monkeypatch.setitem(
         __import__("sys").modules,
-        "wrs_debugger_native",
-        SimpleNamespace(TransmitterClient=lambda: transmitter, ReceiverClient=lambda: receiver),
+        "wrs_debugger_adapter",
+        SimpleNamespace(
+            TransmitterClient=lambda: transmitter,
+            ReceiverClient=lambda: receiver,
+            configure_wrs_logging=lambda _: None,
+            clear_wrs_logging=lambda: None,
+        ),
     )
     return PybindWrsGateway(), transmitter, receiver
 
@@ -65,6 +73,13 @@ def test_factory_binding_uses_same_material_and_verifies_find(
     assert transmitter.find_called
     assert receiver.bound
     assert handle.kbind is None
+
+
+def test_receiver_state_probe_uses_wireless_estop_state_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter, _, _ = gateway(monkeypatch)
+    assert adapter.probe_receiver_wireless_estop_state() is True
 
 
 def test_missing_driver_capability_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:

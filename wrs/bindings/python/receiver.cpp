@@ -155,6 +155,16 @@ void bind_receiver(py::module_& module) {
                     return py::dict("bound"_a = state.bound, "device_id"_a = state.device_id);
                 })
             .def(
+                "read_wireless_estop_state",
+                [](receiver::Client& value) {
+                    const auto state = unwrap(value.read_wireless_estop_state());
+                    return py::dict(
+                        "device_id"_a = state.device_id, "state"_a = state.state,
+                        "rssi"_a = state.rssi, "snr"_a = state.snr,
+                        "error_code"_a = state.error_code, "warning_code"_a = state.warning_code,
+                        "tick"_a = state.tick, "crc"_a = state.crc);
+                })
+            .def(
                 "start_binding",
                 [](receiver::Client& value, std::uint32_t device_id, const py::bytes& key,
                    std::uint32_t transaction_id) {

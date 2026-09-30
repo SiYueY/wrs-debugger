@@ -5,7 +5,8 @@ import { t } from '../i18n';
 import { useDebuggerStore } from '../stores/debugger';
 import SettingsDialog from './SettingsDialog.vue';
 const store = useDebuggerStore();
-const { diagnostic, domainId, ports, selectedPort, receiver, loading } = storeToRefs(store);
+const { diagnostic, domainId, ports, selectedPort, receiver, loading, notification } =
+  storeToRefs(store);
 const settingsOpen = ref(false);
 const labels = computed(() => ({
   disconnected: t('disconnected'),
@@ -22,8 +23,11 @@ const diagnosticLabel = computed(() => {
 });
 async function selectTransmitterPort(event: Event) {
   const device = (event.target as HTMLSelectElement).value;
-  if (device === '__disconnect__') await store.disconnectTransmitter();
-  else await store.selectPort(device);
+  if (!device) {
+    if (store.transmitterConnected) await store.disconnectTransmitter();
+    return;
+  }
+  await store.selectPort(device);
 }
 </script>
 <template>
@@ -65,9 +69,7 @@ async function selectTransmitterPort(event: Event) {
           :disabled="loading"
           @change="selectTransmitterPort"
         >
-          <option v-if="store.transmitterConnected" value="__disconnect__">
-            {{ t('disconnect') }}
-          </option>
+          <option value="">{{ t('unspecified') }}</option>
           <option v-for="port in ports" :key="port.device" :value="port.device">
             {{ port.device }}
           </option>
@@ -75,6 +77,14 @@ async function selectTransmitterPort(event: Event) {
       </label>
     </div>
     <div class="toolbar-spacer"></div>
+    <div
+      v-if="notification.message"
+      class="notification"
+      :class="{ error: notification.error }"
+      :title="notification.message"
+    >
+      {{ notification.message }}
+    </div>
     <div class="group diagnostic-group">
       <div class="diagnostic" :class="{ active: hasDiagnosticError }" :title="diagnosticLabel">
         <span aria-hidden="true">ⓘ</span>{{ diagnosticLabel }}
@@ -109,6 +119,23 @@ async function selectTransmitterPort(event: Event) {
 }
 .toolbar-spacer {
   flex: 1;
+}
+.notification {
+  width: min(360px, 24vw);
+  height: 30px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid #79af79;
+  background: #edf7ed;
+  color: var(--ok);
+  line-height: 30px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notification.error {
+  border-color: #d56464;
+  background: #fff0f0;
+  color: var(--danger);
 }
 .diagnostic-group {
   margin-left: auto;
@@ -182,6 +209,23 @@ select {
   .toolbar {
     align-content: center;
     padding: 6px 10px;
+  }
+  .notification {
+    width: min(360px, 24vw);
+    height: 30px;
+    padding: 0 9px;
+    overflow: hidden;
+    border: 1px solid #79af79;
+    background: #edf7ed;
+    color: var(--ok);
+    line-height: 30px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .notification.error {
+    border-color: #d56464;
+    background: #fff0f0;
+    color: var(--danger);
   }
   .diagnostic-group {
     width: 100%;

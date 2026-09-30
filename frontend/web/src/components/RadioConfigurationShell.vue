@@ -1,9 +1,15 @@
 <script setup lang="ts">
+import { computed, useSlots } from 'vue';
 import type { RadioKind } from '../domain/radio';
 import { t } from '../i18n';
 
-defineProps<{ mode: RadioKind; message: string }>();
+defineProps<{ mode: RadioKind }>();
 defineEmits<{ 'update:mode': [value: RadioKind] }>();
+
+const slots = useSlots();
+const hasIdentityPrimary = computed(() => Boolean(slots['identity-primary']));
+const hasIdentitySecondary = computed(() => Boolean(slots['identity-secondary']));
+const hasIdentityPanel = computed(() => hasIdentityPrimary.value || hasIdentitySecondary.value);
 </script>
 
 <template>
@@ -18,10 +24,10 @@ defineEmits<{ 'update:mode': [value: RadioKind] }>();
         </button>
       </nav>
       <section class="configuration-card">
-        <section class="identity-panel">
-          <div class="identity-row">
+        <section v-if="hasIdentityPanel" class="identity-panel">
+          <div class="identity-row" :class="{ single: !hasIdentitySecondary }">
             <slot name="identity-primary" />
-            <div class="divider"></div>
+            <div v-if="hasIdentityPrimary && hasIdentitySecondary" class="divider"></div>
             <slot name="identity-secondary" />
           </div>
         </section>
@@ -31,9 +37,6 @@ defineEmits<{ 'update:mode': [value: RadioKind] }>();
           </div>
           <div class="parameter-content"><slot /></div>
           <div class="parameter-actions">
-            <span :class="{ error: message && message !== t('operationSucceeded') }">{{
-              message
-            }}</span>
             <slot name="actions" />
           </div>
         </section>
@@ -119,6 +122,9 @@ defineEmits<{ 'update:mode': [value: RadioKind] }>();
   min-height: 70px;
   padding: 8px 34px;
 }
+.identity-row.single {
+  grid-template-columns: minmax(0, 1fr);
+}
 .identity-row :deep(.identity-group) {
   display: grid;
   grid-template-columns: max-content 108px max-content;
@@ -191,13 +197,6 @@ defineEmits<{ 'update:mode': [value: RadioKind] }>();
 }
 .parameter-actions :deep(.dbg-btn) {
   min-width: var(--parameter-button-width);
-}
-.parameter-actions > span {
-  margin-right: auto;
-  color: var(--ok);
-}
-.parameter-actions > .error {
-  color: var(--danger);
 }
 @media (max-width: 920px) {
   .identity-panel {

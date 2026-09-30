@@ -7,20 +7,32 @@ import {
   type Operation,
   type SerialPort,
 } from '../api/wrs';
+import { t } from '../i18n';
 import { runtimeConfig } from '../runtime';
 
 const disconnected = (): Connection => ({ state: 'disconnected' });
+
+function selectedTransmitterPort(connection: Connection) {
+  return connection.state === 'connected' ? (connection.device ?? '') : '';
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : t('operationFailed');
+}
+let notificationTimer: ReturnType<typeof setTimeout> | undefined;
 export const useDebuggerStore = defineStore('debugger', {
   state: () => ({
     domainId: 0,
     ports: [] as SerialPort[],
     selectedPort: '',
+    pendingTransmitterPort: '',
     transmitter: disconnected(),
     receiver: disconnected(),
     loading: false,
     operation: null as Operation | null,
     diagnostic: { code: null, detail: null } as DiagnosticError,
     error: '',
+    notification: { message: '', error: false },
   }),
   getters: {
     transmitterConnected: (state) => state.transmitter.state === 'connected',
@@ -28,6 +40,13 @@ export const useDebuggerStore = defineStore('debugger', {
     stateLabel: () => (state: ConnectionState) => state,
   },
   actions: {
+    showNotification(message: string, error = false) {
+      if (notificationTimer) window.clearTimeout(notificationTimer);
+      this.notification = { message, error };
+      notificationTimer = window.setTimeout(() => {
+        this.notification = { message: '', error: false };
+      }, 3_000);
+    },
     async bootstrap() {
       this.loading = true;
       try {
@@ -46,7 +65,7 @@ export const useDebuggerStore = defineStore('debugger', {
         } catch {
           this.diagnostic = { code: null, detail: null };
         }
-        this.selectedPort = transmitter.device ?? ports.ports[0]?.device ?? '';
+        this.selectedPort = selectedTransmitterPort(transmitter);
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Request failed';
       } finally {
@@ -93,10 +112,21 @@ export const useDebuggerStore = defineStore('debugger', {
     },
     async selectPort(device: string) {
       this.selectedPort = device;
+      this.pendingTransmitterPort = device;
+      this.transmitter = { state: 'connecting', device };
       this.loading = true;
       try {
-        this.transmitter = await api.connectTransmitter(device);
+        const connection = await api.connectTransmitter(device);
+        this.transmitter = connection;
+        this.selectedPort = selectedTransmitterPort(connection);
+        if (connection.state === 'connected' && connection.device)
+          this.showNotification(`${t('transmitterConnectSucceeded')}：${connection.device}`);
+      } catch (error) {
+        this.transmitter = disconnected();
+        this.selectedPort = '';
+        this.showNotification(`${t('transmitterConnectFailed')}：${errorMessage(error)}`, true);
       } finally {
+        this.pendingTransmitterPort = '';
         this.loading = false;
       }
     },
@@ -112,6 +142,10 @@ export const useDebuggerStore = defineStore('debugger', {
     async syncSnapshot() {
       const snapshot = await api.snapshot();
       this.transmitter = snapshot.transmitter.connection;
+      const isPendingConnection =
+        this.transmitter.state === 'connecting' &&
+        this.transmitter.device === this.pendingTransmitterPort;
+      if (!isPendingConnection) this.selectedPort = selectedTransmitterPort(this.transmitter);
       this.receiver = snapshot.receiver.connection;
       this.operation = snapshot.active_operation;
     },
@@ -128,8 +162,13 @@ export const useDebuggerStore = defineStore('debugger', {
         };
         socket.onmessage = (message) => {
           const event = JSON.parse(message.data) as { event: string; data: Connection | Operation };
-          if (event.event === 'transmitter.connection.changed')
+          if (event.event === 'transmitter.connection.changed') {
             this.transmitter = event.data as Connection;
+            const isPendingConnection =
+              this.transmitter.state === 'connecting' &&
+              this.transmitter.device === this.pendingTransmitterPort;
+            if (!isPendingConnection) this.selectedPort = selectedTransmitterPort(this.transmitter);
+          }
           if (event.event === 'receiver.connection.changed')
             this.receiver = event.data as Connection;
           if (event.event === 'operation.updated') this.operation = event.data as Operation;

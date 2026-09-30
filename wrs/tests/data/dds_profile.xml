@@ -12,11 +12,6 @@
                     <!-- <address>0.0.0.0</address> 配置主机需要绑定的网卡ip -->
                 </interfaceWhiteList>
             </transport_descriptor>
-            <transport_descriptor>
-            <transport_id>shm_transport</transport_id>
-            <type>SHM</type>
-            <segment_size>16777216</segment_size>
-            </transport_descriptor>
         </transport_descriptors>
 
         <!-- DomainParticipant -->
@@ -25,7 +20,6 @@
             <rtps>
                 <userTransports>
                     <transport_id>udpv4_nonblocking_transport</transport_id>
-                    <!-- <transport_id>shm_transport</transport_id> -->
                 </userTransports>
                 <useBuiltinTransports>false</useBuiltinTransports>
 

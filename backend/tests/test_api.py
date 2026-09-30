@@ -24,7 +24,7 @@ from wrs_debugger.models.lora import LoRaParameters
 from wrs_debugger.services.native_executor import InlineMockExecutor
 from wrs_debugger.services.runtime import Runtime
 from wrs_debugger.services.transmitter import TransmitterService
-from wrs_debugger.settings import SettingsRepository
+from wrs_debugger.settings import BackendSettings, SettingsRepository
 from wrs_debugger.websocket.hub import WebSocketHub
 
 LORA_ZERO_VALUES = {
@@ -60,10 +60,15 @@ GFSK_ZERO_VALUES = {
 
 
 @asynccontextmanager
-async def api_client(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, object]]:
+async def api_client(
+    tmp_path: Path, receiver_state_timeout_seconds: float = 3.0
+) -> AsyncIterator[tuple[httpx.AsyncClient, object]]:
     app = create_app(
         gateway_factory=MockWrsGateway,
         settings_repository=SettingsRepository(tmp_path / "settings.json"),
+        backend_settings=BackendSettings(
+            receiver_state_timeout_seconds=receiver_state_timeout_seconds
+        ),
     )
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -85,6 +90,70 @@ async def connect_both(client: httpx.AsyncClient) -> None:
         await client.post("/api/v1/transmitter/connect", json={"device": "/dev/ttyACM0"})
     ).status_code == 200
     assert (await client.post("/api/v1/receiver/connect", json={"domain_id": 0})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_receiver_state_topic_timeout_disconnects_without_auto_reconnect(
+    tmp_path: Path,
+) -> None:
+    async with api_client(tmp_path, receiver_state_timeout_seconds=0.1) as (client, app):
+        gateway = cast(MockWrsGateway, app.state.gateway)
+        assert (
+            await client.post("/api/v1/receiver/connect", json={"domain_id": 7})
+        ).status_code == 200
+
+        gateway.receiver_state_available = False
+        await asyncio.sleep(0.4)
+
+        connection = (await client.get("/api/v1/receiver/connection")).json()
+        assert connection["state"] == "disconnected"
+        assert connection["domain_id"] == 7
+        assert connection["error"]["code"] == "RECEIVER_STATE_TIMEOUT"
+        assert gateway.receiver_disconnect_calls == 1
+
+        gateway.receiver_state_available = True
+        await asyncio.sleep(0.3)
+        assert (await client.get("/api/v1/receiver/connection")).json()["state"] == "disconnected"
+        assert gateway.receiver_disconnect_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_receiver_state_topic_keeps_connection_alive_and_times_out_after_stopping(
+    tmp_path: Path,
+) -> None:
+    async with api_client(tmp_path, receiver_state_timeout_seconds=0.1) as (client, app):
+        gateway = cast(MockWrsGateway, app.state.gateway)
+        assert (
+            await client.post("/api/v1/receiver/connect", json={"domain_id": 3})
+        ).status_code == 200
+
+        await asyncio.sleep(0.4)
+        assert (await client.get("/api/v1/receiver/connection")).json()["state"] == "connected"
+
+        gateway.receiver_state_available = False
+        await asyncio.sleep(0.4)
+        assert (await client.get("/api/v1/receiver/connection")).json()["state"] == "disconnected"
+
+
+@pytest.mark.asyncio
+async def test_invalid_receiver_state_does_not_refresh_timeout(tmp_path: Path) -> None:
+    async with api_client(tmp_path, receiver_state_timeout_seconds=0.1) as (client, app):
+        gateway = cast(MockWrsGateway, app.state.gateway)
+        assert (
+            await client.post("/api/v1/receiver/connect", json={"domain_id": 5})
+        ).status_code == 200
+        gateway.receiver_state_error = ApplicationError(
+            "RECEIVER_UNEXPECTED_RESPONSE",
+            502,
+            "Invalid receiver state",
+            "WirelessEStopState contains invalid fields.",
+        )
+
+        await asyncio.sleep(0.4)
+
+        connection = (await client.get("/api/v1/receiver/connection")).json()
+        assert connection["state"] == "disconnected"
+        assert connection["error"]["code"] == "RECEIVER_STATE_TIMEOUT"
 
 
 @pytest.mark.asyncio

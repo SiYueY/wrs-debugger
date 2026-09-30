@@ -1,3 +1,5 @@
+import logging
+import time
 from datetime import UTC, datetime
 
 from wrs_debugger.errors import ApplicationError
@@ -15,16 +17,25 @@ from wrs_debugger.models.lora import LoRaParameters
 from wrs_debugger.services.runtime import Runtime
 from wrs_debugger.settings import SettingsRepository
 
+logger = logging.getLogger(__name__)
+
 
 class ReceiverService:
     _SDO_READABLE = frozenset({0x001, 0x002, 0x003, *range(0x008, 0x044), 0x201, 0x202})
     _SDO_WRITABLE = frozenset({0x202})
     _UPGRADE_REQUEST_VALUE = 0x0000454E
 
-    def __init__(self, runtime: Runtime, settings: SettingsRepository) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        settings: SettingsRepository,
+        state_timeout_seconds: float = 3.0,
+    ) -> None:
         self.runtime = runtime
         self.settings_repository = settings
         self._settings = ReceiverSettings(domain_id=settings.load_domain_id())
+        self._state_timeout_seconds = state_timeout_seconds
+        self._last_wireless_estop_state_at: float | None = None
 
     def settings(self) -> ReceiverSettings:
         return self._settings.model_copy(deep=True)
@@ -75,6 +86,7 @@ class ReceiverService:
                     "An unexpected error occurred while connecting the receiver.",
                 )
                 raise
+            self._last_wireless_estop_state_at = time.monotonic()
             self.runtime.set_receiver_connection(
                 ReceiverConnection(
                     state=ConnectionState.connected,
@@ -109,11 +121,91 @@ class ReceiverService:
                     "An unexpected error occurred while disconnecting the receiver.",
                 )
                 raise
+            self._last_wireless_estop_state_at = None
             self.runtime.set_receiver_connection(
                 ReceiverConnection(state=ConnectionState.disconnected)
             )
             await self._publish_connection()
             return self.connection()
+
+    async def probe_wireless_estop_state_connection(self) -> None:
+        """Disconnect after the configured period without a valid state Topic sample."""
+        if self.runtime.receiver_connection.state != ConnectionState.connected:
+            return
+        async with self.runtime.receiver_lock:
+            connection = self.runtime.receiver_connection
+            if connection.state != ConnectionState.connected:
+                return
+            now = time.monotonic()
+            try:
+                received = await self.runtime.call(
+                    self.runtime.gateway.probe_receiver_wireless_estop_state
+                )
+            except ApplicationError as error:
+                received = False
+                logger.warning(
+                    "WirelessEStopState probe failed: code=%s detail=%s domain_id=%s",
+                    error.code,
+                    error.detail,
+                    connection.domain_id,
+                )
+            except Exception:
+                received = False
+                logger.exception(
+                    "WirelessEStopState probe failed unexpectedly: domain_id=%s",
+                    connection.domain_id,
+                )
+            if received:
+                self._last_wireless_estop_state_at = now
+                return
+
+            last_received_at = self._last_wireless_estop_state_at
+            if last_received_at is None:
+                last_received_at = now
+                self._last_wireless_estop_state_at = now
+            silent_seconds = now - last_received_at
+            if silent_seconds < self._state_timeout_seconds:
+                logger.debug(
+                    "WirelessEStopState not received: domain_id=%s silent_seconds=%.3f",
+                    connection.domain_id,
+                    silent_seconds,
+                )
+                return
+
+            detail = (
+                "No valid WirelessEStopState sample was received for "
+                f"{silent_seconds:.1f} seconds (timeout: {self._state_timeout_seconds:.1f} seconds)."
+            )
+            logger.error(
+                "WirelessEStopState timeout: domain_id=%s silent_seconds=%.3f timeout_seconds=%.3f",
+                connection.domain_id,
+                silent_seconds,
+                self._state_timeout_seconds,
+            )
+            try:
+                await self.runtime.call(self.runtime.gateway.disconnect_receiver)
+            except ApplicationError as error:
+                logger.warning(
+                    "Receiver DDS disconnect after WirelessEStopState timeout failed: "
+                    "code=%s detail=%s domain_id=%s",
+                    error.code,
+                    error.detail,
+                    connection.domain_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Receiver DDS disconnect after WirelessEStopState timeout failed: domain_id=%s",
+                    connection.domain_id,
+                )
+            self._last_wireless_estop_state_at = None
+            self.runtime.set_receiver_connection(
+                ReceiverConnection(
+                    state=ConnectionState.disconnected,
+                    domain_id=connection.domain_id,
+                    error=ConnectionError(code="RECEIVER_STATE_TIMEOUT", detail=detail),
+                )
+            )
+            await self._publish_connection()
 
     async def info(self) -> ReceiverInfo:
         self._require_connected()

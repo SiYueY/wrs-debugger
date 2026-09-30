@@ -1,10 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
-project(wrs_debugger_native LANGUAGES CXX)
+project(wrs_debugger_adapter LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BUILD_TRANSMITTER_PYTHON "Build pybind11 transmitter module" OFF)
+
+add_library(wrs_logging STATIC src/wrs/logging.cpp)
+set_target_properties(wrs_logging PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(wrs_logging PUBLIC include)
+target_compile_options(wrs_logging PRIVATE -Wall -Wextra -Wpedantic)
 option(BUILD_TRANSMITTER_SIMULATOR_E2E "Build Host-to-Simulator transmitter E2E tests" ON)
 
 add_library(wrs_transmitter STATIC
@@ -12,6 +17,7 @@ add_library(wrs_transmitter STATIC
   src/transmitter/client.cpp src/transmitter/discovery.cpp src/transmitter/protocol.cpp)
 set_target_properties(wrs_transmitter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(wrs_transmitter PUBLIC include)
+target_link_libraries(wrs_transmitter PUBLIC wrs_logging)
 target_compile_options(wrs_transmitter PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(wrs_receiver STATIC
@@ -47,7 +53,7 @@ target_sources(wrs_receiver PRIVATE
 target_include_directories(wrs_receiver PRIVATE
   "${FASTDDS_ROOT}/include" "${DDS_WRAPPER_ROOT}/include"
   "${ESTOP_DDS_DIR}/srv" "${ESTOP_DDS_DIR}/msg")
-target_link_libraries(wrs_receiver PUBLIC dds_wrapper
+target_link_libraries(wrs_receiver PUBLIC wrs_logging dds_wrapper
   "${FASTDDS_LIBRARY_DIR}/libfastrtps.so"
   "${FASTDDS_LIBRARY_DIR}/libfastcdr.so")
 target_compile_options(wrs_receiver PRIVATE -Wall -Wextra -Wpedantic)
@@ -56,17 +62,18 @@ if(BUILD_TRANSMITTER_PYTHON)
   find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
   find_package(pybind11 CONFIG REQUIRED)
   pybind11_add_module(
-    wrs_debugger_native
+    wrs_debugger_adapter
     bindings/python/module.cpp
+    bindings/python/logging.cpp
     bindings/python/transmitter.cpp
     bindings/python/receiver.cpp)
-  target_link_libraries(wrs_debugger_native PRIVATE wrs_transmitter wrs_receiver)
+  target_link_libraries(wrs_debugger_adapter PRIVATE wrs_transmitter wrs_receiver)
   # The shipped Fast DDS DSOs have transitive dependencies outside the system loader path.
-  target_link_options(wrs_debugger_native PRIVATE -Wl,--disable-new-dtags)
-  target_include_directories(wrs_debugger_native PRIVATE include)
-  target_compile_options(wrs_debugger_native PRIVATE -Wall -Wextra -Wpedantic)
+  target_link_options(wrs_debugger_adapter PRIVATE -Wl,--disable-new-dtags)
+  target_include_directories(wrs_debugger_adapter PRIVATE include)
+  target_compile_options(wrs_debugger_adapter PRIVATE -Wall -Wextra -Wpedantic)
   if(DEFINED WRS_PYTHON_OUTPUT_DIR)
-    set_target_properties(wrs_debugger_native PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${WRS_PYTHON_OUTPUT_DIR}")
+    set_target_properties(wrs_debugger_adapter PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${WRS_PYTHON_OUTPUT_DIR}")
   endif()
 endif()
 

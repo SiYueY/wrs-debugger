@@ -17,6 +17,7 @@ from wrs_debugger.api.routers import diagnostics, operations, receiver, system, 
 from wrs_debugger.errors import ApplicationError
 from wrs_debugger.gateway.base import WrsGateway
 from wrs_debugger.gateway.pybind import PybindWrsGateway
+from wrs_debugger.logging_config import configure_logging
 from wrs_debugger.models.connection import (
     ConnectionState,
     ReceiverConnection,
@@ -47,6 +48,13 @@ async def monitor_transmitter_connection(service: TransmitterService) -> None:
             continue
 
 
+async def monitor_receiver_wireless_estop_state(service: ReceiverService) -> None:
+    """Disconnect the receiver after its WirelessEStopState Topic becomes silent."""
+    while True:
+        await asyncio.sleep(0.25)
+        await service.probe_wireless_estop_state_connection()
+
+
 def create_app(
     *,
     gateway_factory: GatewayFactory | None = None,
@@ -59,6 +67,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        configure_logging()
         hub = WebSocketHub()
         gateway = factory()
         state_mirror = gateway if isinstance(gateway, StateMirror) else None
@@ -67,7 +76,9 @@ def create_app(
             publish=hub.publish,
             transmitter_connection=TransmitterConnection(state=ConnectionState.disconnected),
             receiver_connection=ReceiverConnection(state=ConnectionState.disconnected),
-            executor=InlineMockExecutor() if gateway_factory is not None else ThreadedNativeExecutor(),
+            executor=InlineMockExecutor()
+            if gateway_factory is not None
+            else ThreadedNativeExecutor(),
             state_mirror=state_mirror,
         )
         operation_manager = OperationManager(hub.publish)
@@ -76,7 +87,9 @@ def create_app(
         application.state.runtime = runtime
         application.state.operations = operation_manager
         application.state.transmitter_service = TransmitterService(runtime)
-        application.state.receiver_service = ReceiverService(runtime, repository)
+        application.state.receiver_service = ReceiverService(
+            runtime, repository, configured_settings.receiver_state_timeout_seconds
+        )
         application.state.synchronization_service = SynchronizationService(
             runtime, operation_manager
         )
@@ -85,20 +98,31 @@ def create_app(
         application.state.websocket_hub = hub
         application.state.backend_settings = configured_settings
         application.state.backend_instance_id = uuid4().hex
-        # gateway_factory is exclusively a test seam; production always monitors native I/O.
+        # gateway_factory is exclusively a test seam; production monitors transmitter I/O.
         transmitter_monitor = (
-            asyncio.create_task(monitor_transmitter_connection(application.state.transmitter_service))
+            asyncio.create_task(
+                monitor_transmitter_connection(application.state.transmitter_service)
+            )
             if gateway_factory is None
             else None
+        )
+        receiver_state_monitor = asyncio.create_task(
+            monitor_receiver_wireless_estop_state(application.state.receiver_service)
         )
         try:
             yield
         finally:
+            receiver_state_monitor.cancel()
+            with suppress(asyncio.CancelledError):
+                await receiver_state_monitor
             if transmitter_monitor is not None:
                 transmitter_monitor.cancel()
                 with suppress(asyncio.CancelledError):
                     await transmitter_monitor
             await operation_manager.shutdown()
+            close = getattr(gateway, "close", None)
+            if callable(close):
+                close()
 
     application = FastAPI(title="WRS Debugger API", version=__version__, lifespan=lifespan)
     application.add_middleware(

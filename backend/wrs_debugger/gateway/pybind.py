@@ -1,5 +1,6 @@
 """Native transmitter gateway backed by the C++ pybind11 extension."""
 
+import logging
 from typing import Any, Never
 from uuid import uuid4
 
@@ -69,10 +70,18 @@ _ERRORS: dict[str, tuple[str, int, str]] = {
 
 def native_available() -> bool:
     try:
-        import wrs_debugger_native  # type: ignore[import-not-found]  # noqa: F401
+        import wrs_debugger_adapter  # type: ignore[import-not-found]  # noqa: F401
     except ImportError:
         return False
     return True
+
+
+wrs_logger = logging.getLogger("wrs_logging")
+
+
+def _log_wrs(level: int, component: str, message: str) -> None:
+    python_level = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR)[level]
+    wrs_logger.log(python_level, "%s %s", component, message)
 
 
 class PybindWrsGateway:
@@ -80,13 +89,17 @@ class PybindWrsGateway:
 
     def __init__(self) -> None:
         try:
-            import wrs_debugger_native
+            import wrs_debugger_adapter
         except ImportError as error:
             raise RuntimeError("WRS native transmitter module is unavailable") from error
-        self._native: Any = wrs_debugger_native
-        self._client: Any = wrs_debugger_native.TransmitterClient()
-        receiver_type = getattr(wrs_debugger_native, "ReceiverClient", None)
+        self._native: Any = wrs_debugger_adapter
+        self._native.configure_wrs_logging(_log_wrs)
+        self._client: Any = wrs_debugger_adapter.TransmitterClient()
+        receiver_type = getattr(wrs_debugger_adapter, "ReceiverClient", None)
         self._receiver: Any | None = receiver_type() if receiver_type is not None else None
+
+    def close(self) -> None:
+        self._native.clear_wrs_logging()
 
     @staticmethod
     def native_executor() -> ThreadedNativeExecutor:
@@ -203,6 +216,15 @@ class PybindWrsGateway:
 
     def disconnect_receiver(self) -> None:
         self._call_receiver_method("disconnect")
+
+    def probe_receiver_wireless_estop_state(self) -> bool:
+        try:
+            self._call_receiver_method("read_wireless_estop_state")
+        except ApplicationError as error:
+            if error.code == "RECEIVER_NOT_RECEIVED":
+                return False
+            raise
+        return True
 
     def read_receiver_info(self) -> ReceiverInfo:
         return ReceiverInfo.model_validate(self._call_receiver_method("info"))

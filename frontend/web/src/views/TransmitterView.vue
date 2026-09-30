@@ -7,7 +7,7 @@ import { useOperationFeedback } from '../composables/useOperationFeedback';
 import { useRadioParameterState } from '../composables/useRadioParameterState';
 import { useSdoState } from '../composables/useSdoState';
 import { transmitterRadioEditorConfig, validateTransmitterRadioParameters } from '../domain/radio';
-import { t } from '../i18n';
+import { t, type TranslationKey } from '../i18n';
 import { useDebuggerStore } from '../stores/debugger';
 
 const store = useDebuggerStore();
@@ -18,46 +18,66 @@ const sdo = useSdoState(transmitterRadioEditorConfig);
 const feedback = useOperationFeedback(() => store.refreshDiagnostic());
 const ready = computed(() => store.transmitterConnected && !feedback.busy.value);
 
+function parameterSuccess(action: TranslationKey) {
+  const modulation = radio.mode.value === 'lora' ? 'LoRa' : 'GFSK';
+  return `${modulation} ${t(action)}`;
+}
+
+function sdoSuccess(action: TranslationKey) {
+  const address = sdo.objectAddress.value.toString(16).toUpperCase().padStart(3, '0');
+  return `${t(action)}（0x${address}）`;
+}
+
 async function readParameters() {
-  await feedback.run(async () => {
-    sdo.operation.value = 'read';
-    if (sdo.objectAddress.value !== 0) {
-      sdo.applyResponse(await api.readTransmitterSdo(sdo.objectAddress.value));
-      return;
-    }
-    if (radio.mode.value === 'lora') radio.lora.value = await api.transmitterLora();
-    else radio.gfsk.value = await api.transmitterGfsk();
-    sdo.markParameterSuccess('read');
-  });
+  await feedback.run(
+    async () => {
+      sdo.operation.value = 'read';
+      if (sdo.objectAddress.value !== 0) {
+        sdo.applyResponse(await api.readTransmitterSdo(sdo.objectAddress.value));
+        return;
+      }
+      if (radio.mode.value === 'lora') radio.lora.value = await api.transmitterLora();
+      else radio.gfsk.value = await api.transmitterGfsk();
+      sdo.markParameterSuccess('read');
+    },
+    sdo.objectAddress.value === 0
+      ? parameterSuccess('readParametersSucceeded')
+      : sdoSuccess('readSdoSucceeded'),
+  );
 }
 
 async function writeParameters() {
   if (sdo.objectAddress.value === 0) {
     const error = validateTransmitterRadioParameters(radio.mode.value, radio.current.value);
-    if (error) return void (feedback.message.value = t(error.messageKey));
+    if (error) return void feedback.notify(t(error.messageKey), true);
   }
-  await feedback.run(async () => {
-    sdo.operation.value = 'write';
-    if (sdo.objectAddress.value !== 0) {
-      sdo.applyResponse(
-        await api.writeTransmitterSdo(sdo.objectAddress.value, sdo.objectData.value),
-      );
-      return;
-    }
-    if (radio.mode.value === 'lora') {
-      await api.writeTransmitterLora(radio.lora.value);
-      radio.lora.value = await api.transmitterLora();
-    } else {
-      await api.writeTransmitterGfsk(radio.gfsk.value);
-      radio.gfsk.value = await api.transmitterGfsk();
-    }
-    sdo.markParameterSuccess('write');
-  });
+  await feedback.run(
+    async () => {
+      sdo.operation.value = 'write';
+      if (sdo.objectAddress.value !== 0) {
+        sdo.applyResponse(
+          await api.writeTransmitterSdo(sdo.objectAddress.value, sdo.objectData.value),
+        );
+        return;
+      }
+      if (radio.mode.value === 'lora') {
+        await api.writeTransmitterLora(radio.lora.value);
+        radio.lora.value = await api.transmitterLora();
+      } else {
+        await api.writeTransmitterGfsk(radio.gfsk.value);
+        radio.gfsk.value = await api.transmitterGfsk();
+      }
+      sdo.markParameterSuccess('write');
+    },
+    sdo.objectAddress.value === 0
+      ? parameterSuccess('writeParametersSucceeded')
+      : sdoSuccess('writeSdoSucceeded'),
+  );
 }
 
 async function restoreParameters() {
   if (sdo.objectAddress.value !== 0)
-    return void (feedback.message.value = t('restoreCommunicationOnly'));
+    return void feedback.notify(t('restoreCommunicationOnly'), true);
   await feedback.run(async () => {
     if (radio.mode.value === 'lora') {
       await api.restoreTransmitterLora();
@@ -66,25 +86,29 @@ async function restoreParameters() {
       await api.restoreTransmitterGfsk();
       radio.gfsk.value = await api.transmitterGfsk();
     }
-  });
+  }, parameterSuccess('restoreParametersSucceeded'));
 }
 
 async function readDeviceId() {
-  await feedback.run(async () => {
-    deviceId.value = (await api.transmitterInfo()).device_id ?? '-';
-  });
+  await feedback.run(
+    async () => {
+      deviceId.value = (await api.transmitterInfo()).device_id ?? '-';
+      return deviceId.value;
+    },
+    (id) => `${t('readDeviceIdSucceeded')}：${id}`,
+  );
 }
 
 async function readPin() {
   await feedback.run(async () => {
     pin.value = (await api.readPin()).pin;
-  });
+  }, t('readPinSucceeded'));
 }
 
 async function writePin() {
   if (!/^\d{6}$/.test(pin.value) || pin.value === '000000')
-    return void (feedback.message.value = t('pinInvalid'));
-  await feedback.run(() => api.writePin(pin.value));
+    return void feedback.notify(t('pinInvalid'), true);
+  await feedback.run(() => api.writePin(pin.value), t('writePinSucceeded'));
 }
 
 watch(
@@ -96,6 +120,7 @@ watch(
       void readParameters();
     } else {
       radio.reset();
+      sdo.reset();
       deviceId.value = '-';
       pin.value = '';
     }
@@ -105,7 +130,7 @@ watch(
 </script>
 
 <template>
-  <RadioConfigurationShell v-model:mode="radio.mode.value" :message="feedback.message.value">
+  <RadioConfigurationShell v-model:mode="radio.mode.value">
     <template #identity-primary>
       <div class="identity-group">
         <label>{{ t('transmitterDeviceId') }}</label>
@@ -125,6 +150,7 @@ watch(
     </template>
 
     <RadioParametersEditor
+      :unavailable="!store.transmitterConnected"
       v-model="radio.current.value"
       v-model:object-address="sdo.objectAddress.value"
       v-model:object-data="sdo.objectData.value"

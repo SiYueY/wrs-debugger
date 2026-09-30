@@ -14,6 +14,7 @@ const props = withDefaults(
     kind: RadioKind;
     config: RadioEditorConfig;
     disabled?: boolean;
+    unavailable?: boolean;
     objectAddress?: number;
     objectData?: number;
     operation?: 'read' | 'write';
@@ -22,6 +23,7 @@ const props = withDefaults(
   }>(),
   {
     disabled: false,
+    unavailable: false,
     objectAddress: 0,
     objectData: 0,
     operation: 'read',
@@ -111,7 +113,7 @@ const objectDataDisabled = computed(
 );
 </script>
 <template>
-  <div class="parameter-grid">
+  <div class="parameter-grid" :class="{ unavailable }">
     <section class="parameter-column">
       <template v-if="config.showSdo">
         <h3>{{ t('sdo') }}</h3>
@@ -335,6 +337,16 @@ output {
 .hex-input:focus-within {
   border-color: #4d90fe;
   box-shadow: 0 0 0 1px #4d90fe;
+}
+.parameter-grid.unavailable :is(select, output, .hex-input) {
+  background-image: linear-gradient(#8a8a8a, #8a8a8a);
+  background-position: 7px center;
+  background-repeat: no-repeat;
+  background-size: 14px 1px;
+  color: transparent;
+}
+.parameter-grid.unavailable .hex-input > :is(span, input) {
+  color: transparent;
 }
 @media (max-width: 920px) {
   .parameter-grid {

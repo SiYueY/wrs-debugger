@@ -1,23 +1,30 @@
 import { ref } from 'vue';
 import { t } from '../i18n';
+import { useDebuggerStore } from '../stores/debugger';
 
 export function useOperationFeedback(onError: () => void | Promise<void>) {
+  const store = useDebuggerStore();
   const busy = ref(false);
-  const message = ref('');
 
-  async function run(action: () => Promise<void>) {
+  function notify(message: string, error = false) {
+    store.showNotification(message, error);
+  }
+
+  async function run<T>(
+    action: () => Promise<T>,
+    successMessage: string | ((result: T) => string) = t('operationSucceeded'),
+  ) {
     busy.value = true;
-    message.value = '';
     try {
-      await action();
-      message.value = t('operationSucceeded');
+      const result = await action();
+      notify(typeof successMessage === 'function' ? successMessage(result) : successMessage);
     } catch (error) {
-      message.value = error instanceof Error ? error.message : t('operationFailed');
+      notify(error instanceof Error ? error.message : t('operationFailed'), true);
       void onError();
     } finally {
       busy.value = false;
     }
   }
 
-  return { busy, message, run };
+  return { busy, notify, run };
 }

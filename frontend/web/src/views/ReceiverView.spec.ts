@@ -68,14 +68,24 @@ describe('ReceiverView', () => {
     mockedApi.diagnosticError.mockResolvedValue({ code: null, detail: null });
   });
 
+  it('clears parameter content after the receiver disconnects', async () => {
+    const { wrapper, store } = await mountConnected();
+    expect(wrapper.findComponent(RadioParametersEditor).exists()).toBe(true);
+
+    store.receiver = { state: 'disconnected' };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.findComponent(RadioParametersEditor).props('unavailable')).toBe(true);
+  });
+
   it('retains the current parameters when reading fails', async () => {
-    const { wrapper } = await mountConnected();
+    const { wrapper, store } = await mountConnected();
     const before = wrapper.findComponent(RadioParametersEditor).props('modelValue');
     mockedApi.receiverLora.mockRejectedValueOnce(new Error('read failed'));
     await button(wrapper, '读取参数').trigger('click');
     await flushPromises();
     expect(wrapper.findComponent(RadioParametersEditor).props('modelValue')).toEqual(before);
-    expect(wrapper.text()).toContain('read failed');
+    expect(store.notification).toEqual({ message: 'read failed', error: true });
   });
 
   it('reads back parameters after writing and restoring', async () => {

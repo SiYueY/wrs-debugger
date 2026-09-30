@@ -23,6 +23,14 @@ export function useSdoState(config: RadioEditorConfig) {
     resultCode.value = 0;
   }
 
+  function reset() {
+    objectAddress.value = 0;
+    objectData.value = 0;
+    operation.value = 'read';
+    responseStatus.value = null;
+    resultCode.value = null;
+  }
+
   watch(objectAddress, (address) => {
     objectData.value = findSdoObject(config, address)?.defaultWriteValue ?? 0;
     responseStatus.value = null;
@@ -39,5 +47,6 @@ export function useSdoState(config: RadioEditorConfig) {
     canWrite,
     applyResponse,
     markParameterSuccess,
+    reset,
   };
 }

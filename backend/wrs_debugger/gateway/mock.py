@@ -93,6 +93,9 @@ class MockWrsGateway:
     fail_receiver_connect: bool = False
     fail_factory_bind: bool = False
     fail_binding_receiver: bool = False
+    receiver_state_available: bool = True
+    receiver_state_error: ApplicationError | None = None
+    receiver_disconnect_calls: int = 0
 
     def list_serial_ports(self) -> list[SerialPortInfo]:
         return [port.model_copy(deep=True) for port in self.available_serial_ports]
@@ -176,7 +179,12 @@ class MockWrsGateway:
             )
 
     def disconnect_receiver(self) -> None:
-        return
+        self.receiver_disconnect_calls += 1
+
+    def probe_receiver_wireless_estop_state(self) -> bool:
+        if self.receiver_state_error is not None:
+            raise self.receiver_state_error
+        return self.receiver_state_available
 
     def read_receiver_info(self) -> ReceiverInfo:
         return ReceiverInfo(bound_device_id=self.receiver_bound_device_id)

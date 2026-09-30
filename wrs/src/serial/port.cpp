@@ -1,5 +1,7 @@
 #include <serial/port.hpp>
 
+#include <wrs/logging.hpp>
+
 #include "tty.hpp"
 
 #include <cerrno>
@@ -509,7 +511,18 @@ Port::Port(Port&& other) noexcept : fd_(other.fd_), rts_automatic_(other.rts_aut
 bool Port::is_open() const noexcept { return fd_ >= 0; }
 
 wrs::Result<void, Error> Port::open(const std::string& path, const Config& config) noexcept {
-    if (is_open()) return Result<void>::failure(Error::AlreadyOpen);
+    WRS_LOG_INFO("serial.port") << "Open request\n  path: " << path
+                                << "\n  baud_rate: " << config.baud_rate
+                                << "\n  data_bits: " << static_cast<unsigned int>(config.data_bits)
+                                << "\n  parity: " << static_cast<unsigned int>(config.parity)
+                                << "\n  stop_bits: " << static_cast<unsigned int>(config.stop_bits)
+                                << "\n  flow_control: "
+                                << static_cast<unsigned int>(config.flow_control)
+                                << "\n  rs485_enabled: " << config.rs485.enabled;
+    if (is_open()) {
+        WRS_LOG_ERROR("serial.port") << "Open rejected: port is already open";
+        return Result<void>::failure(Error::AlreadyOpen);
+    }
     if (path.empty() || path.find('\0') != std::string::npos) {
         return Result<void>::failure(Error::InvalidArgument);
     }
@@ -609,11 +622,16 @@ wrs::Result<void, Error> Port::open(const std::string& path, const Config& confi
 
     fd_ = candidate;
     rts_automatic_ = config.rs485.enabled || config.flow_control == FlowControl::RtsCts;
+    WRS_LOG_INFO("serial.port") << "Open succeeded\n  path: " << path << "\n  fd: " << fd_;
     return Result<void>::success();
 }
 
 wrs::Result<void, Error> Port::close() noexcept {
-    if (!is_open()) return Result<void>::success();
+    if (!is_open()) {
+        WRS_LOG_DEBUG("serial.port") << "Close skipped: port is already closed";
+        return Result<void>::success();
+    }
+    WRS_LOG_INFO("serial.port") << "Close request\n  fd: " << fd_;
 
     const int closing = fd_;
     fd_ = kClosedFd;
@@ -623,16 +641,34 @@ wrs::Result<void, Error> Port::close() noexcept {
     if (tty::clear_exclusive(closing) < 0) exclusive_error = errno;
     if (tty::close(closing) < 0) {
         const int err = errno;
-        return Result<void>::failure(to_error(err, ErrorContext::Runtime));
+        const auto error = to_error(err, ErrorContext::Runtime);
+        WRS_LOG_ERROR("serial.port") << "Close failed\n  fd: " << closing << "\n  errno: " << err
+                                     << "\n  error: " << static_cast<unsigned int>(error);
+        return Result<void>::failure(error);
     }
     if (exclusive_error != 0) {
-        return Result<void>::failure(to_error(exclusive_error, ErrorContext::Runtime));
+        const auto error = to_error(exclusive_error, ErrorContext::Runtime);
+        WRS_LOG_WARNING("serial.port")
+            << "Close completed with exclusive-lock cleanup failure\n  fd: " << closing
+            << "\n  errno: " << exclusive_error
+            << "\n  error: " << static_cast<unsigned int>(error);
+        return Result<void>::failure(error);
     }
+    WRS_LOG_INFO("serial.port") << "Close succeeded\n  fd: " << closing;
     return Result<void>::success();
 }
 
 wrs::Result<std::size_t, Error> Port::read(std::byte* data, std::size_t size) noexcept {
-    return read_transfer(fd_, data, size, nullptr, TransferMode::Wait);
+    auto result = read_transfer(fd_, data, size, nullptr, TransferMode::Wait);
+    if (result) {
+        WRS_LOG_INFO("serial.port") << "Read succeeded\n  requested_bytes: " << size
+                                    << "\n  transferred_bytes: " << result.value();
+    } else {
+        WRS_LOG_WARNING("serial.port")
+            << "Read failed\n  requested_bytes: " << size
+            << "\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<std::size_t, Error> Port::read(
@@ -640,15 +676,42 @@ wrs::Result<std::size_t, Error> Port::read(
     if (!is_open()) return Result<std::size_t>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
     if (!deadline) return Result<std::size_t>::failure(deadline.error());
-    return read_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
+    auto result = read_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
+    if (result) {
+        WRS_LOG_INFO("serial.port") << "Read succeeded\n  requested_bytes: " << size
+                                    << "\n  transferred_bytes: " << result.value();
+    } else {
+        WRS_LOG_WARNING("serial.port")
+            << "Read failed\n  requested_bytes: " << size
+            << "\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<std::size_t, Error> Port::try_read(std::byte* data, std::size_t size) noexcept {
-    return read_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
+    auto result = read_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
+    if (result) {
+        WRS_LOG_DEBUG("serial.port") << "Immediate read succeeded\n  requested_bytes: " << size
+                                     << "\n  transferred_bytes: " << result.value();
+    } else {
+        WRS_LOG_DEBUG("serial.port")
+            << "Immediate read made no progress\n  requested_bytes: " << size
+            << "\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<std::size_t, Error> Port::write(const std::byte* data, std::size_t size) noexcept {
-    return write_transfer(fd_, data, size, nullptr, TransferMode::Wait);
+    auto result = write_transfer(fd_, data, size, nullptr, TransferMode::Wait);
+    if (result) {
+        WRS_LOG_INFO("serial.port") << "Write succeeded\n  requested_bytes: " << size
+                                    << "\n  transferred_bytes: " << result.value();
+    } else {
+        WRS_LOG_WARNING("serial.port")
+            << "Write failed\n  requested_bytes: " << size
+            << "\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<std::size_t, Error> Port::write(
@@ -656,25 +719,53 @@ wrs::Result<std::size_t, Error> Port::write(
     if (!is_open()) return Result<std::size_t>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
     if (!deadline) return Result<std::size_t>::failure(deadline.error());
-    return write_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
+    auto result = write_transfer(fd_, data, size, &deadline.value(), TransferMode::Wait);
+    if (result) {
+        WRS_LOG_INFO("serial.port") << "Write succeeded\n  requested_bytes: " << size
+                                    << "\n  transferred_bytes: " << result.value();
+    } else {
+        WRS_LOG_WARNING("serial.port")
+            << "Write failed\n  requested_bytes: " << size
+            << "\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<std::size_t, Error> Port::try_write(const std::byte* data, std::size_t size) noexcept {
-    return write_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
+    auto result = write_transfer(fd_, data, size, nullptr, TransferMode::Immediate);
+    if (result) {
+        WRS_LOG_DEBUG("serial.port") << "Immediate write succeeded\n  requested_bytes: " << size
+                                     << "\n  transferred_bytes: " << result.value();
+    } else {
+        WRS_LOG_DEBUG("serial.port")
+            << "Immediate write made no progress\n  requested_bytes: " << size
+            << "\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<void, Error> Port::wait_readable(std::chrono::nanoseconds timeout) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
     if (!deadline) return Result<void>::failure(deadline.error());
-    return wait_fd(fd_, POLLIN, &deadline.value());
+    auto result = wait_fd(fd_, POLLIN, &deadline.value());
+    if (!result) {
+        WRS_LOG_WARNING("serial.port")
+            << "Wait readable failed\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<void, Error> Port::wait_writable(std::chrono::nanoseconds timeout) noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     auto deadline = make_deadline(timeout);
     if (!deadline) return Result<void>::failure(deadline.error());
-    return wait_fd(fd_, POLLOUT, &deadline.value());
+    auto result = wait_fd(fd_, POLLOUT, &deadline.value());
+    if (!result) {
+        WRS_LOG_WARNING("serial.port")
+            << "Wait writable failed\n  error: " << static_cast<unsigned int>(result.error());
+    }
+    return result;
 }
 
 wrs::Result<std::size_t, Error> Port::bytes_available() const noexcept {
@@ -705,8 +796,12 @@ wrs::Result<void, Error> Port::discard_input() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (tty::discard(fd_, TCIFLUSH) < 0) {
         const int err = errno;
-        return Result<void>::failure(to_error(err, ErrorContext::Runtime));
+        const auto error = to_error(err, ErrorContext::Runtime);
+        WRS_LOG_WARNING("serial.port") << "Discard input failed\n  errno: " << err
+                                       << "\n  error: " << static_cast<unsigned int>(error);
+        return Result<void>::failure(error);
     }
+    WRS_LOG_INFO("serial.port") << "Discard input succeeded";
     return Result<void>::success();
 }
 
@@ -714,8 +809,12 @@ wrs::Result<void, Error> Port::discard_output() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (tty::discard(fd_, TCOFLUSH) < 0) {
         const int err = errno;
-        return Result<void>::failure(to_error(err, ErrorContext::Runtime));
+        const auto error = to_error(err, ErrorContext::Runtime);
+        WRS_LOG_WARNING("serial.port") << "Discard output failed\n  errno: " << err
+                                       << "\n  error: " << static_cast<unsigned int>(error);
+        return Result<void>::failure(error);
     }
+    WRS_LOG_INFO("serial.port") << "Discard output succeeded";
     return Result<void>::success();
 }
 
@@ -723,8 +822,12 @@ wrs::Result<void, Error> Port::discard_buffers() noexcept {
     if (!is_open()) return Result<void>::failure(Error::NotOpen);
     if (tty::discard(fd_, TCIOFLUSH) < 0) {
         const int err = errno;
-        return Result<void>::failure(to_error(err, ErrorContext::Runtime));
+        const auto error = to_error(err, ErrorContext::Runtime);
+        WRS_LOG_WARNING("serial.port") << "Discard buffers failed\n  errno: " << err
+                                       << "\n  error: " << static_cast<unsigned int>(error);
+        return Result<void>::failure(error);
     }
+    WRS_LOG_INFO("serial.port") << "Discard buffers succeeded";
     return Result<void>::success();
 }
 
